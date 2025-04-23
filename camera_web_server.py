@@ -124,6 +124,7 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
     Asynchronously generates video frames for streaming:
     - Captures frames from the camera at 1080p.
     - Flips the frame vertically (upside down).
+    - Flips the frame horizontally (mirror image).
     - Converts frames to JPEG images with correct color ordering.
     - Yields frames in MJPEG format for the browser.
     - Aims for approximately 30 FPS.
@@ -131,11 +132,14 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
     target_fps = 30
     frame_duration = 1 / target_fps
     while True:
-        # Capture a frame as a numpy array (shape: 1080x1920x3 for RGB888)
+        # Capture a frame as a numpy array (shape: 1080x1920x3 for BGR888)
         frame = picam2.capture_array()
 
         # Flip the frame vertically (upside down)
         frame = np.flipud(frame)
+
+        # Flip the frame horizontally (left-right)
+        frame = np.fliplr(frame)
 
         # Convert the numpy array to a PIL Image for JPEG encoding
         image = Image.fromarray(frame)
