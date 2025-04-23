@@ -113,7 +113,7 @@ Parameters explained:
 """
 picam2.configure(
     picam2.create_preview_configuration(
-        main={"format": "RGB888", "size": (640, 480)}
+        main={"format": "RGB888", "size": (1920, 1080)}
     )
 )
 ####################################################################################
@@ -122,13 +122,16 @@ picam2.configure(
 async def generate_frames() -> AsyncGenerator[bytes, None]:
     """
     Asynchronously generates video frames for streaming:
-    - Captures frames from the camera.
+    - Captures frames from the camera at 1080p.
     - Flips the frame vertically (upside down).
     - Converts frames to JPEG images with correct color ordering.
     - Yields frames in MJPEG format for the browser.
+    - Aims for approximately 30 FPS.
     """
+    target_fps = 30
+    frame_duration = 1 / target_fps
     while True:
-        # Capture a frame as a numpy array
+        # Capture a frame as a numpy array (shape: 1080x1920x3 for RGB888)
         frame = picam2.capture_array()
 
         # Flip the frame vertically (upside down)
@@ -151,9 +154,8 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
 
-        # Pause briefly to achieve ~10 FPS (0.1 seconds per frame)
-        # Adjust this value to change the frame rate (e.g., 0.05 for 20 FPS)
-        await asyncio.sleep(0.1)
+        # Pause briefly to aim for ~30 FPS
+        await asyncio.sleep(frame_duration)
 
 
 async def generate() -> AsyncGenerator[bytes, None]:
