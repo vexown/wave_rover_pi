@@ -113,7 +113,7 @@ Parameters explained:
 """
 picam2.configure(
     picam2.create_preview_configuration(
-        main={"format": "RGB888", "size": (1920, 1080)}
+        main={"format": "BGR888", "size": (1920, 1080)}
     )
 )
 ####################################################################################
@@ -136,10 +136,6 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
 
         # Flip the frame vertically (upside down)
         frame = np.flipud(frame)
-
-        # Swap color channels (RGB to BGR) to correct color display
-        # Without this, colors may appear incorrect (e.g., orange walls look blue)
-        frame = frame[:, :, ::-1]
 
         # Convert the numpy array to a PIL Image for JPEG encoding
         image = Image.fromarray(frame)
