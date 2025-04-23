@@ -123,30 +123,34 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
     """
     Asynchronously generates video frames for streaming:
     - Captures frames from the camera.
+    - Flips the frame vertically (upside down).
     - Converts frames to JPEG images with correct color ordering.
     - Yields frames in MJPEG format for the browser.
     """
     while True:
-        # Capture a frame as a numpy array (shape: 480x640x3 for RGB888)
+        # Capture a frame as a numpy array
         frame = picam2.capture_array()
-        
+
+        # Flip the frame vertically (upside down)
+        frame = np.flipud(frame)
+
         # Swap color channels (RGB to BGR) to correct color display
         # Without this, colors may appear incorrect (e.g., orange walls look blue)
         frame = frame[:, :, ::-1]
-        
+
         # Convert the numpy array to a PIL Image for JPEG encoding
         image = Image.fromarray(frame)
-        
+
         # Save the image to a BytesIO buffer as JPEG
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG")
         frame_bytes = buffer.getvalue()
-        
+
         # Yield the frame in MJPEG format with appropriate headers
         # The `--frame` boundary and `Content-Type` are required for MJPEG streaming
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
-        
+
         # Pause briefly to achieve ~10 FPS (0.1 seconds per frame)
         # Adjust this value to change the frame rate (e.g., 0.05 for 20 FPS)
         await asyncio.sleep(0.1)
