@@ -167,6 +167,9 @@ async def generate_frames() -> AsyncGenerator[bytes, None]:
         # Flip the frame horizontally (left-right)
         frame_processed = np.fliplr(frame_processed)
 
+        # Ensure the array is C-contiguous for OpenCV drawing functions
+        frame_processed = np.ascontiguousarray(frame_processed)
+
         # --- Object Detection ---
         # 1. Preprocess the frame for the model
         img_rgb = cv2.cvtColor(frame_processed, cv2.COLOR_BGR2RGB) # Model expects RGB
