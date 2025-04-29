@@ -47,7 +47,7 @@ import cv2                                      # OpenCV for image processing (d
 import tflite_runtime.interpreter as tflite     # TensorFlow Lite runtime interpreter
 
 # --- Object Detection Setup ---
-MODEL_PATH = "efficientdet_lite0_metadata.tflite"
+MODEL_PATH = "efficientdet_lite2_metadata.tflite"
 LABEL_PATH = "coco_labels.txt"
 CONFIDENCE_THRESHOLD = 0.5 # Only show detections with score >= 50%
 
