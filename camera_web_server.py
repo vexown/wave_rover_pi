@@ -16,7 +16,6 @@ Requirements:
 - Python 3.11 or later.
 - Installed libraries: `fastapi`, `uvicorn`, `picamera2`, `Pillow`, `numpy`.
   Install with: `pip install fastapi uvicorn picamera2 Pillow numpy`
-  Also: 'pip install tflite_runtime opencv-python'
 - SSL certificates for HTTPS (e.g., self-signed certs at `/home/blankmcu/certs/192.168.1.191.pem` and `/home/blankmcu/certs/192.168.1.191-key.pem`).
   (generated via mkcert but you could also use openssl or other tools)
 
@@ -33,6 +32,7 @@ Troubleshooting:
 - If colors appear incorrect, verify the color channel swap (`frame[:, :, ::-1]`) matches your camera’s output format.
 - Ensure the SSL certificates are valid and accessible.
 """
+
 import asyncio                                  # For asynchronous operations like frame generation and delays
 from typing import AsyncGenerator               # Type hint for asynchronous generators (like generate_frames)
 from contextlib import asynccontextmanager      # For creating asynchronous context managers (like lifespan)
@@ -43,28 +43,6 @@ from picamera2 import Picamera2                 # Library to control the Raspber
 from PIL import Image                           # Python Imaging Library (Pillow) for image manipulation (converting array to JPEG)
 import io                                       # For handling in-memory binary streams (like the JPEG buffer)
 import numpy as np                              # Library for numerical operations, used for handling image arrays
-import cv2                                      # OpenCV for image processing (drawing boxes)
-import tflite_runtime.interpreter as tflite     # TensorFlow Lite runtime interpreter
-
-# --- Object Detection Setup ---
-MODEL_PATH = "efficientdet_lite2_metadata.tflite"
-LABEL_PATH = "coco_labels.txt"
-CONFIDENCE_THRESHOLD = 0.5 # Only show detections with score >= 50%
-
-# Load the labels
-with open(LABEL_PATH, 'r') as f:
-    labels = {i: line.strip() for i, line in enumerate(f.readlines())}
-
-# Load the TFLite model and allocate tensors
-interpreter = tflite.Interpreter(model_path=MODEL_PATH)
-interpreter.allocate_tensors()
-
-# Get input and output tensor details
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-input_height = input_details[0]['shape'][1]
-input_width = input_details[0]['shape'][2]
-# --- End Object Detection Setup ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -143,92 +121,41 @@ picam2.configure(
 
 async def generate_frames() -> AsyncGenerator[bytes, None]:
     """
-    Asynchronously generates video frames with object detection overlays:
-    - Captures frames from the camera.
-    - Flips the frame vertically and horizontally.
-    - Prepares the frame for the TFLite model (resize, normalize).
-    - Runs inference using the TFLite interpreter.
-    - Draws bounding boxes and labels for detected objects above the confidence threshold.
-    - Converts the frame with overlays to JPEG.
-    - Yields frames in MJPEG format.
+    Asynchronously generates video frames for streaming:
+    - Captures frames from the camera at 1080p.
+    - Flips the frame vertically (upside down).
+    - Flips the frame horizontally (mirror image).
+    - Converts frames to JPEG images with correct color ordering.
+    - Yields frames in MJPEG format for the browser.
+    - Aims for approximately 30 FPS.
     """
-    target_fps = 15 # Lower FPS slightly for detection overhead
+    target_fps = 30
     frame_duration = 1 / target_fps
     while True:
-        start_time = asyncio.get_event_loop().time() # For FPS calculation
-
-        # Capture a frame as a numpy array (shape: HxWx3 for BGR888)
-        frame_original = picam2.capture_array()
-        frame_height, frame_width, _ = frame_original.shape
+        # Capture a frame as a numpy array (shape: 1080x1920x3 for BGR888)
+        frame = picam2.capture_array()
 
         # Flip the frame vertically (upside down)
-        frame_processed = np.flipud(frame_original)
+        frame = np.flipud(frame)
 
         # Flip the frame horizontally (left-right)
-        frame_processed = np.fliplr(frame_processed)
+        frame = np.fliplr(frame)
 
-        # Ensure the array is C-contiguous for OpenCV drawing functions
-        frame_processed = np.ascontiguousarray(frame_processed)
-
-        # --- Object Detection ---
-        # 1. Preprocess the frame for the model
-        img_rgb = cv2.cvtColor(frame_processed, cv2.COLOR_BGR2RGB) # Model expects RGB
-        img_resized = cv2.resize(img_rgb, (input_width, input_height))
-        input_data = np.expand_dims(img_resized, axis=0) # Add batch dimension
-
-        # 2. Run inference
-        interpreter.set_tensor(input_details[0]['index'], input_data)
-        interpreter.invoke()
-
-        # 3. Get detection results
-        boxes = interpreter.get_tensor(output_details[0]['index'])[0] # Bounding boxes
-        classes = interpreter.get_tensor(output_details[1]['index'])[0] # Class IDs
-        scores = interpreter.get_tensor(output_details[2]['index'])[0] # Confidence scores
-        # num_detections = interpreter.get_tensor(output_details[3]['index'])[0] # Number of detections (optional)
-
-        # 4. Draw bounding boxes on the *processed* frame
-        for i in range(len(scores)):
-            if scores[i] >= CONFIDENCE_THRESHOLD:
-                ymin, xmin, ymax, xmax = boxes[i]
-                # Denormalize coordinates to original frame dimensions
-                (left, right, top, bottom) = (xmin * frame_width, xmax * frame_width,
-                                              ymin * frame_height, ymax * frame_height)
-
-                # Draw bounding box
-                cv2.rectangle(frame_processed, (int(left), int(top)), (int(right), int(bottom)), (0, 255, 0), 2) # Green box
-
-                # Prepare label text
-                object_name = labels.get(int(classes[i]), 'Unknown') # Look up class name
-                label = f"{object_name}: {int(scores[i]*100)}%"
-
-                # Draw label background
-                label_size, base_line = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                top = max(top, label_size[1]) # Ensure label doesn't go off screen
-                cv2.rectangle(frame_processed, (int(left), int(top - label_size[1])),
-                              (int(left + label_size[0]), int(top + base_line)), (0, 255, 0), cv2.FILLED)
-                # Draw label text
-                cv2.putText(frame_processed, label, (int(left), int(top)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2) # Black text
-
-        # --- End Object Detection ---
-
-        # Convert the processed frame (with drawings) to a PIL Image for JPEG encoding
-        # Note: We are encoding frame_processed which has the drawings
-        image = Image.fromarray(frame_processed) # Already BGR, PIL handles it
+        # Convert the numpy array to a PIL Image for JPEG encoding
+        image = Image.fromarray(frame)
 
         # Save the image to a BytesIO buffer as JPEG
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG")
         frame_bytes = buffer.getvalue()
 
-        # Yield the frame in MJPEG format
+        # Yield the frame in MJPEG format with appropriate headers
+        # The `--frame` boundary and `Content-Type` are required for MJPEG streaming
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n" + frame_bytes + b"\r\n")
 
-        # Calculate time taken and sleep to maintain target FPS
-        end_time = asyncio.get_event_loop().time()
-        processing_time = end_time - start_time
-        sleep_duration = max(0, frame_duration - processing_time)
-        await asyncio.sleep(sleep_duration)
+        # Pause briefly to aim for ~30 FPS
+        await asyncio.sleep(frame_duration)
 
 
 async def generate() -> AsyncGenerator[bytes, None]:
