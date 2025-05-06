@@ -17,11 +17,11 @@ if [ ! -d "${SRC_DIR}" ]; then
 fi
 
 # Create the destination directory if it doesn't exist
-mkdir -p "${DEST_DIR}"
+sudo mkdir -p "${DEST_DIR}"
 
 # Copy the src directory to the destination
 echo "Copying ${SRC_DIR} to ${DEST_DIR}..."
-cp -r "${SRC_DIR}" "${DEST_DIR}/"
+sudo cp -r "${SRC_DIR}" "${DEST_DIR}/"
 
 if [ $? -eq 0 ]; then
     echo "Successfully copied src to ${DEST_DIR}."
