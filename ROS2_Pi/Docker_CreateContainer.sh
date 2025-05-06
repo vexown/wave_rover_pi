@@ -6,6 +6,12 @@ then
     exit 1
 fi
 
+# Check if the container already exists
+if [ "$(sudo docker ps -a -q -f name=ros2_dev)" ]; then
+    echo "Container 'ros2_dev' already exists. Please remove it first (with Docker_RemoveContainer.sh)."
+    exit 1
+fi
+
 # Pull the latest ROS 2 image (Jazzy)
 sudo docker pull ros:jazzy-ros-core
 
