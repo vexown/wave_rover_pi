@@ -51,7 +51,7 @@ sudo docker run -it --name=ros2_dev --privileged \
 # Note: The above command will run the container interactively. To exit the container, use Ctrl + C or type 'exit'.
 
 echo "Remember to run the following command to source the ROS 2 environment in the container:"
-echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc "
+echo "source /opt/ros/jazzy/setup.bash >> ~/.bashrc "
 
 
 
