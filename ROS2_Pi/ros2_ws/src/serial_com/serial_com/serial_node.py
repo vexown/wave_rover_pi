@@ -25,15 +25,10 @@ class SerialComNode(Node):
             try:
                 if self.serial_port.in_waiting > 0:
                     received_data = self.serial_port.readline().decode('utf-8').strip()
-                    if received_data == "Hello from ESP32!":
+                    if received_data: # Log any received data
                         self.get_logger().info(f'Received: "{received_data}"')
-                        response_message = "Hello ROS 2 Pi received your message!\n"
-                        self.serial_port.write(response_message.encode('utf-8'))
-                        self.get_logger().info(f'Sent: "{response_message.strip()}"')
-                    elif received_data:
-                        self.get_logger().info(f'Received unknown data: "{received_data}"')
             except serial.SerialException as e:
-                self.get_logger().error(f'Error reading/writing from serial port: {e}')
+                self.get_logger().error(f'Error reading from serial port: {e}')
             except UnicodeDecodeError as e:
                 self.get_logger().warn(f'Could not decode received data: {e}')
 
@@ -46,3 +41,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
