@@ -47,9 +47,11 @@ sudo docker run -it --name=ros2_dev --privileged \
     --device /dev/spidev0.1:/dev/spidev0.1 \
     --device /dev/gpiochip0:/dev/gpiochip0 \
     ros:jazzy-ros-base
-    
+
 # Note: The above command will run the container interactively. To exit the container, use Ctrl + C or type 'exit'.
 
+echo "Remember to run the following command to source the ROS 2 environment in the container:"
+echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc "
 
 
 
