@@ -19,7 +19,13 @@ fi
 # Create the destination directory if it doesn't exist
 sudo mkdir -p "${DEST_DIR}"
 
-# Copy the src directory to the destination
+# First delete the existing src directory in the destination
+if [ -d "${DEST_DIR}/src" ]; then
+    echo "Deleting existing src directory in ${DEST_DIR}..."
+    sudo rm -rf "${DEST_DIR}/src"
+fi
+
+# Then copy the src directory to the destination
 echo "Copying ${SRC_DIR} to ${DEST_DIR}..."
 sudo cp -r "${SRC_DIR}" "${DEST_DIR}/"
 
