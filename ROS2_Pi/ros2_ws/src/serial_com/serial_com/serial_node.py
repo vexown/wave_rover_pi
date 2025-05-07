@@ -1,3 +1,23 @@
+# Important:
+#
+# To ensure proper serial communication with this ROS 2 node,
+# the Raspberry Pi on which it is running must be configured correctly.
+#
+# Configuration Steps:
+#
+# 1. Edit /boot/firmware/config.txt:
+#    - Ensure the line 'enable_uart=1' is present (uncomment it if necessary).
+#    - (optional?) Ensure the line 'dtoverlay=disable-bt' is present to disable Bluetooth
+#      and make the primary UART (/dev/ttyS0 or /dev/ttyAMA0) available on the GPIO pins.
+#
+# 2. Edit /boot/firmware/cmdline.txt:
+#    - Remove any instances of 'console=serial0,115200' or 'console=ttyS0,115200'
+#      to prevent the Raspberry Pi from using the UART for system console output,
+#      which will interfere with serial communication.
+#
+# Failure to configure these files correctly will result in interference
+# with the serial communication and the node may not function as expected.
+
 import rclpy
 from rclpy.node import Node
 import serial
