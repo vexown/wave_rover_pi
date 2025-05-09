@@ -12,6 +12,14 @@ if [ "$(sudo docker ps -a -q -f name=ros2_dev)" ]; then
     exit 1
 fi
 
+# Allow the root user on the local machine (which includes processes within the Docker container,
+# especially if they run as root) to connect to the host's X server.
+# This is necessary for GUI applications (e.g., RViz, Gazebo) running inside the Docker container
+# to display their windows on the host machine's screen.
+# TODO: Consider more secure alternatives for X11 forwarding, such as using xauth with specific cookies
+# or running the container with a user that matches the host's UID/GID to avoid needing broad root access to X.
+xhost +local:root
+
 # Pull the latest ROS 2 image (Jazzy)
 sudo docker pull ros:jazzy-ros-core
 
