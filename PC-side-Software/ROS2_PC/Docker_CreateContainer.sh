@@ -79,5 +79,9 @@ sudo docker run -it --name=ros2_dev --privileged \
 echo "Remember to run the following command to source the ROS 2 environment in the container:"
 echo "source /opt/ros/jazzy/setup.bash >> ~/.bashrc "
 
-
-
+#TODO: Consider adding a command to automatically source the ROS 2 environment in the container's ~/.bashrc file.
+# Also add these env variables to the container:
+# echo "export ROS_DOMAIN_ID=0" >> ~/.bashrc
+# echo "export ROS_LOCALHOST_ONLY=0" >> ~/.bashrc
+# echo "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" >> ~/.bashrc
+# echo "export ROS_DISCOVERY_SERVER=" >> ~/.bashrc
