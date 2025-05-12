@@ -47,7 +47,8 @@ cd "$BUILD_DIR"
 # Step 4: Clone and build rpicam-apps
 echo "[*] Cloning rpicam-apps repository..."
 git clone "$RPICAM_APPS_REPO" rpicam-apps
-cd rpicam-apps\mkdir -p build && cd build
+cd rpicam-apps
+mkdir -p build && cd build
 
 echo "[*] Configuring rpicam-apps with CMake..."
 cmake .. -DCMAKE_BUILD_TYPE=Release
