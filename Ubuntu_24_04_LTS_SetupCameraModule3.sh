@@ -19,6 +19,9 @@ sudo apt install -y \
   libssl-dev pkg-config cmake \
   python3-pip
 
+echo "[*] Installing ply using pip..."
+sudo pip3 install ply --break-system-packages
+
 # Step 2: Prepare build directory
 echo "[*] Preparing build directory at $BUILD_DIR..."
 rm -rf "$BUILD_DIR"
