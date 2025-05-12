@@ -44,20 +44,19 @@ echo "[*] Installing libcamera..."
 sudo ninja install
 cd "$BUILD_DIR"
 
-# Step 4: Clone and build rpicam-apps
+# Step 4: Clone and build rpicam-apps using Meson
 echo "[*] Cloning rpicam-apps repository..."
 git clone "$RPICAM_APPS_REPO" rpicam-apps
 cd rpicam-apps
-mkdir -p build && cd build
 
-echo "[*] Configuring rpicam-apps with CMake..."
-cmake .. -DCMAKE_BUILD_TYPE=Release
+echo "[*] Configuring rpicam-apps with Meson..."
+meson setup build
 
-echo "[*] Building rpicam-apps..."
-make -j "$NUM_CORES"
+echo "[*] Building rpicam-apps with Meson..."
+meson compile -C build -j "$NUM_CORES"
 
 echo "[*] Installing rpicam-apps..."
-sudo make install
+sudo meson install -C build
 
 # Step 5: Finalize
 echo "[*] Setup complete!"
