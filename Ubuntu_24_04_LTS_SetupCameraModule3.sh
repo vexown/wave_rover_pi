@@ -14,10 +14,11 @@ NUM_CORES=$(nproc)
 echo "[*] Updating system and installing build dependencies..."
 sudo apt update && sudo apt full-upgrade -y
 sudo apt install -y \
-  git meson ninja-build \
-  libboost-dev libdrm-dev libexpat1-dev libjpeg-dev libpng-dev \
-  libssl-dev pkg-config cmake \
-  python3-pip
+    git meson ninja-build \
+    libboost-dev libboost-program-options-dev \
+    libdrm-dev libexpat1-dev libjpeg-dev libpng-dev \
+    libssl-dev pkg-config cmake \
+    python3-pip libexif-dev libtiff-dev
 
 echo "[*] Installing ply using pip..."
 sudo pip3 install ply --break-system-packages
