@@ -50,6 +50,13 @@ done
 
 # Set up the environment (adding this to ~/.bashrc to make it permanent)
 echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
-source ~/.bashrc
+# Set up the unique domain ID for ROS2 communication between devices
+echo "export ROS_DOMAIN_ID=1" >> ~/.bashrc
+
+echo ""
+echo "ROS 2 Jazzy installation is complete."
+echo "To make the .bashrc changes effective, run the following command:"
+echo "source ~/.bashrc"
+echo "Alternatively, open a new terminal. (then .bashrc will be sourced automatically)"
 
 
