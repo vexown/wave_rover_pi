@@ -2,37 +2,45 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 import cv2
-from cv_bridge import CvBridge  # Important for converting ROS Image messages to OpenCV images
+from cv_bridge import CvBridge
 
 class ImageSubscriber(Node):
     def __init__(self):
         super().__init__('image_subscriber')
         self.subscription = self.create_subscription(
             Image,
-            '/camera/image_raw',  # Or the topic your camera is publishing to
+            '/camera/image_raw',
             self.image_callback,
             10
         )
-        self.bridge = CvBridge()  # Create a CvBridge object
+        self.bridge = CvBridge()
+        self.get_logger().info('ImageSubscriber initialized and subscribed to /camera/image_raw')
 
     def image_callback(self, msg):
         try:
-            # Convert the ROS Image message to an OpenCV image
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")  #  encoding
+            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.get_logger().debug('Received and converted image')
         except Exception as e:
             self.get_logger().error(f'Error converting image: {e}')
             return
 
-        # Display the image using OpenCV
         cv2.imshow('Camera Feed', cv_image)
-        cv2.waitKey(1)  #  needed to update the display.
+        # Allow graceful shutdown with 'q' key
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            self.get_logger().info('\'q\' pressed, shutting down...')
+            rclpy.shutdown()
 
 def main(args=None):
     rclpy.init(args=args)
     image_subscriber = ImageSubscriber()
-    rclpy.spin(image_subscriber)
-    image_subscriber.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(image_subscriber)
+    except KeyboardInterrupt:
+        image_subscriber.get_logger().info('KeyboardInterrupt, shutting down...')
+    finally:
+        image_subscriber.destroy_node()
+        cv2.destroyAllWindows()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
-        main()
+    main()
