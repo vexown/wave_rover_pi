@@ -17,7 +17,7 @@ if [ ! -d "${SRC_DIR}" ]; then
 fi
 
 # Create the destination directory if it doesn't exist
-sudo mkdir -p "${DEST_DIR}"
+mkdir -p "${DEST_DIR}"
 
 # First delete the existing src directory in the destination
 if [ -d "${DEST_DIR}/src" ]; then
@@ -27,7 +27,7 @@ fi
 
 # Then copy the src directory to the destination
 echo "Copying ${SRC_DIR} to ${DEST_DIR}..."
-sudo cp -r "${SRC_DIR}" "${DEST_DIR}/"
+cp -r "${SRC_DIR}" "${DEST_DIR}/"
 
 if [ $? -eq 0 ]; then
     echo "Successfully copied src to ${DEST_DIR}."
