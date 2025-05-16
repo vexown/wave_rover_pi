@@ -1,27 +1,27 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage
 import cv2
 from cv_bridge import CvBridge
 
-class ImageSubscriber(Node):
+class CompressedImageSubscriber(Node):
     def __init__(self):
-        super().__init__('image_subscriber')
+        super().__init__('compressed_image_subscriber')
         self.subscription = self.create_subscription(
-            Image,
-            '/camera/image_raw',
+            CompressedImage,
+            '/camera/image_raw/compressed',
             self.image_callback,
             10
         )
         self.bridge = CvBridge()
-        self.get_logger().info('ImageSubscriber initialized and subscribed to /camera/image_raw')
+        self.get_logger().info('CompressedImageSubscriber initialized and subscribed to /camera/image_raw/compressed')
 
     def image_callback(self, msg):
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
-            self.get_logger().debug('Received and converted image')
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            self.get_logger().debug('Received and decoded compressed image')
         except Exception as e:
-            self.get_logger().error(f'Error converting image: {e}')
+            self.get_logger().error(f'Error decoding compressed image: {e}')
             return
 
         cv2.imshow('Camera Feed', cv_image)
@@ -32,7 +32,7 @@ class ImageSubscriber(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    image_subscriber = ImageSubscriber()
+    image_subscriber = CompressedImageSubscriber()
     try:
         rclpy.spin(image_subscriber)
     except KeyboardInterrupt:
