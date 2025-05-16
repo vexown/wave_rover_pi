@@ -1,6 +1,7 @@
 #!/bin/bash
 # This script starts the camera_ros node with the specified parameters.
 # See details on the github repo: https://github.com/christianrauch/camera_ros
+# The package is also available on the official ROS2 package repository: https://index.ros.org/p/camera_ros/
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 CALIBRATION_FILE="file://"$SCRIPT_DIR"/dummy_calibration.yaml"
