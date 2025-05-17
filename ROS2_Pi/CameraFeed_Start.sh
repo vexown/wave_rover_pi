@@ -9,7 +9,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # --- Configuring Camera Parameters ---
 ######################################################################
 CALIBRATION_FILE="file://"$SCRIPT_DIR"/dummy_calibration.yaml"
-TARGET_FPS=20 # Set your desired FPS (FPS is the same as framerate in Hz)
+TARGET_FPS=10 # Set your desired FPS (FPS is the same as framerate in Hz)
 WIDTH=800
 HEIGHT=600
 ######################################################################
