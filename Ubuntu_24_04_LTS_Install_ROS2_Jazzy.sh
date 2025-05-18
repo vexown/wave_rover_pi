@@ -52,6 +52,8 @@ done
 echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 # Set up the unique domain ID for ROS2 communication between devices
 echo "export ROS_DOMAIN_ID=1" >> ~/.bashrc
+# Change the DDS implementation to Cyclone DDS (I found it better for camera streaming)
+echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
 
 echo ""
 echo "ROS 2 Jazzy installation is complete."
