@@ -5,7 +5,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # Define the source directory
-SRC_DIR="${HOME}/ros2_ws"
+SRC_DIR="${HOME}/ros2_ws/src"
 
 # Define the destination directory
 DEST_DIR="${SCRIPT_DIR}/src"
