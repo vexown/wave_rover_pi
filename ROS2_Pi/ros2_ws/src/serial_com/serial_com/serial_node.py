@@ -21,44 +21,114 @@
 import rclpy
 from rclpy.node import Node
 import serial
-import time
 
-class SerialComNode(Node):
+class SerialComNode(Node): # Our SerialComNode class inherits from Node (the base class for ROS2 nodes)
+    """
+    __init__ is Python's constructor method - a special method that automatically runs
+    when you create a new instance of a class. It initializes the object's attributes
+    and sets up the initial state. In this case, it sets up the ROS2 node and serial communication.
+    """
     def __init__(self):
-        super().__init__('serial_com_node')
-        self.serial_port = None
-        self.baud_rate = 115200  # Adjust to your ESP32's baud rate
-        self.serial_device = '/dev/ttyS0'  # Or /dev/ttyAMA0, check your Pi's configuration
+        # Initialize the parent ROS2 Node class with our node name
+        super().__init__('serial_com_node') # Super() calls the parent class's __init__ method
+        
+        # Initialize serial communication attributes
+        self.serial_port = None # This will hold our serial port object once opened
+        self.baud_rate = 115200  # Communication speed - must match ESP32 configuration
+        self.serial_device = '/dev/ttyS0'  # Raspberry Pi serial device path
+        
+        # Attempt to establish serial connection
+        self._initialize_serial_connection()
+        
+        # Set up periodic data reading (every 100ms)
+        self.timer = self.create_timer(0.1, self.read_serial)
 
+    def _initialize_serial_connection(self):
+        """
+        Private method to handle serial port initialization with error handling
+        """
         try:
-            self.serial_port = serial.Serial(self.serial_device, self.baud_rate, timeout=1)
-            self.get_logger().info(f'Successfully opened serial port {self.serial_device} at {self.baud_rate} bps')
+            # Open serial port with specified parameters
+            self.serial_port = serial.Serial(
+                port=self.serial_device,
+                baudrate=self.baud_rate,
+                timeout=1  # 1 second timeout for read operations
+            )
+            
+            # Log successful connection
+            self.get_logger().info(
+                f'Successfully opened serial port {self.serial_device} at {self.baud_rate} bps'
+            )
+            
         except serial.SerialException as e:
-            self.get_logger().error(f'Could not open serial port {self.serial_device}: {e}')
+            # Handle serial port errors (device not found, permission issues, etc.)
+            self.get_logger().error(
+                f'Could not open serial port {self.serial_device}: {e}'
+            )
+            
+            # Clean shutdown if serial connection fails
             self.destroy_node()
             return
 
-        self.timer = self.create_timer(0.1, self.read_serial)  # Check for incoming data every 100ms
-
     def read_serial(self):
+        """
+        Timer callback method - reads data from serial port every 100ms
+        This method is called automatically by the ROS2 timer
+        """
+        # Check if serial port exists and is open before attempting to read
         if self.serial_port and self.serial_port.is_open:
             try:
+                # Check if there's data waiting in the serial buffer
                 if self.serial_port.in_waiting > 0:
+                    # Read a complete line from serial port
                     received_data = self.serial_port.readline().decode('utf-8').strip()
-                    if received_data: # Log any received data
+                    
+                    # Only log if we actually received some data
+                    if received_data:
                         self.get_logger().info(f'Received: "{received_data}"')
+                        
             except serial.SerialException as e:
+                # Handle hardware/connection errors with serial port
                 self.get_logger().error(f'Error reading from serial port: {e}')
+                
             except UnicodeDecodeError as e:
+                # Handle cases where received data isn't valid UTF-8
                 self.get_logger().warn(f'Could not decode received data: {e}')
 
+
 def main(args=None):
+    """
+    Main entry point for the ROS2 serial communication node
+    
+    This function:
+    1. Initializes the ROS2 system
+    2. Creates and runs the SerialComNode
+    3. Handles cleanup when the node shuts down
+    
+    Args:
+        args: Command line arguments (optional)
+    """
+    # Initialize the ROS2 Python client library
     rclpy.init(args=args)
+    
+    # Create an instance of our serial communication node
     serial_com_node = SerialComNode()
+    
+    # Keep the node running and processing callbacks until interrupted
+    # This is a blocking call that handles ROS2 message processing
     rclpy.spin(serial_com_node)
+    
+    # Clean up the node when shutting down
     serial_com_node.destroy_node()
+    
+    # Shutdown the ROS2 Python client library
     rclpy.shutdown()
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == '__main__':
+    """
+    Python script entry point
+    This block only runs when the script is executed directly,
+    not when imported as a module
+    """
+    main()
