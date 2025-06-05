@@ -8,7 +8,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 SRC_DIR="${HOME}/ros2_ws/src"
 
 # Define the destination directory
-DEST_DIR="${SCRIPT_DIR}/src"
+DEST_DIR="${SCRIPT_DIR}"
 
 # Check if the source directory exists
 if [ ! -d "${SRC_DIR}" ]; then
