@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copy the src directory from the repository to the ROS 2 workspace available in the container.
+# Copy the src directory from the repository to the ROS 2 workspace.
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
