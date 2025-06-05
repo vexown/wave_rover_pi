@@ -5,10 +5,10 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # Define the source directory
-DEST_DIR="${HOME}/ros2_ws"
+SRC_DIR="${HOME}/ros2_ws"
 
 # Define the destination directory
-SRC_DIR="${SCRIPT_DIR}/src"
+DEST_DIR="${SCRIPT_DIR}/src"
 
 # Check if the source directory exists
 if [ ! -d "${SRC_DIR}" ]; then
