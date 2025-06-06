@@ -21,6 +21,7 @@
 import rclpy
 from rclpy.node import Node
 import serial
+from std_msgs.msg import String
 
 class SerialComNode(Node): # Our SerialComNode class inherits from Node (the base class for ROS2 nodes)
     """
@@ -36,6 +37,14 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
         self.serial_port = None # This will hold our serial port object once opened
         self.baud_rate = 115200  # Communication speed - must match ESP32 configuration
         self.serial_device = '/dev/ttyS0'  # Raspberry Pi serial device path
+        
+        # Create publisher for broadcasting received UART messages
+        # Other nodes can subscribe to this topic to receive the data
+        self.uart_publisher = self.create_publisher(
+            String,           # Message type
+            'uart_data',      # Topic name
+            10               # Queue size (buffer 10 messages)
+        )
         
         # Attempt to establish serial connection
         self._initialize_serial_connection()
@@ -70,6 +79,23 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
             self.destroy_node()
             return
 
+    def _publish_uart_data(self, data):
+        """
+        Private method to publish received UART data to ROS2 topic
+        
+        Args:
+            data (str): The received UART data to publish
+        """
+        # Create a String message object
+        msg = String()
+        msg.data = data
+        
+        # Publish the message to the 'uart_data' topic
+        self.uart_publisher.publish(msg)
+        
+        # Log that we published the data
+        self.get_logger().debug(f'Published UART data: "{data}"')
+
     def read_serial(self):
         """
         Timer callback method - reads data from serial port every 100ms
@@ -83,9 +109,13 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
                     # Read a complete line from serial port
                     received_data = self.serial_port.readline().decode('utf-8').strip()
                     
-                    # Only log if we actually received some data
+                    # Only process if we actually received some data
                     if received_data:
+                        # Log the received data locally
                         self.get_logger().info(f'Received: "{received_data}"')
+                        
+                        # Publish the data to other ROS2 nodes
+                        self._publish_uart_data(received_data)
                         
             except serial.SerialException as e:
                 # Handle hardware/connection errors with serial port
