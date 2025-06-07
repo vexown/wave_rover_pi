@@ -56,7 +56,7 @@ echo "export ROS_DOMAIN_ID=1" >> ~/.bashrc
 echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
 # Set up Cyclone DDS discovery peers (the RPi and PC IP addresses). We use unicast discovery instead of multicast.
 # This apparently provides better performance and reliability in some network configurations. It resolved some issues I had with multicast discovery.
-echo 'export CYCLONEDDS_URI=<CycloneDDS><Discovery><Peers><Peer address="192.168.50.195"/><Peer address="192.168.50.194"/></Peers></Discovery></CycloneDDS>' >> ~/.bashrc
+echo 'export CYCLONEDDS_URI="<CycloneDDS><Discovery><Peers><Peer address=\"192.168.50.195\"/><Peer address=\"192.168.50.194\"/></Peers></Discovery></CycloneDDS>"' >> ~/.bashrc
 echo "Important: If your ROS2 device IP addresses are different from 192.168.50.195 and 192.168.50.194,"
 echo "you will need to edit ~/.bashrc and update the CYCLONEDDS_URI variable with the correct IP addresses."
 
