@@ -7,7 +7,7 @@ Type=simple
 User=blankmcu
 Environment="HOME=/home/blankmcu"
 Environment="ROS_DOMAIN_ID=1"
-ExecStart=/bin/bash -c "source /opt/ros/jazzy/setup.bash && source /home/blankmcu/ros2_ws/install/setup.bash && ros2 launch /home/blankmcu/ros2_ws/src/serial_com/launch/serial_com_launch.py"
+ExecStart=/bin/bash -c "source /opt/ros/jazzy/setup.bash && source /home/blankmcu/ros2_ws/install/setup.bash && sleep 5 && ros2 launch /home/blankmcu/ros2_ws/src/serial_com/launch/serial_com_launch.py"
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
