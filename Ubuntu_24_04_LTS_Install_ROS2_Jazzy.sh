@@ -54,6 +54,9 @@ echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 echo "export ROS_DOMAIN_ID=1" >> ~/.bashrc
 # Change the DDS implementation to Cyclone DDS (I found it better for camera streaming)
 echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+# Set up Cyclone DDS discovery peers (the RPi and PC IP addresses). We use unicast discovery instead of multicast.
+# This apparently provides better performance and reliability in some network configurations. It resolved some issues I had with multicast discovery.
+echo 'export CYCLONEDDS_URI=<CycloneDDS><Discovery><Peers><Peer address="192.168.50.195"/><Peer address="192.168.50.194"/></Peers></Discovery></CycloneDDS>' >> ~/.bashrc
 
 echo ""
 echo "ROS 2 Jazzy installation is complete."
