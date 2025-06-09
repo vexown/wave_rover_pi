@@ -1,0 +1,18 @@
+[Unit]
+Description=ROS 2 GNSS NavSatFix Parser Node for rviz_satellite
+After=network.target
+
+[Service]
+Type=simple
+User=blankmcu
+Environment="HOME=/home/blankmcu"
+Environment="ROS_DOMAIN_ID=1"
+Environment="CYCLONEDDS_URI=<CycloneDDS><Discovery><Peers><Peer address=\"192.168.50.195\"/><Peer address=\"192.168.50.194\"/></Peers></Discovery></CycloneDDS>"
+ExecStart=/bin/bash -c "source /opt/ros/jazzy/setup.bash && source /home/blankmcu/ros2_ws/install/setup.bash && sleep 6 && ros2 launch /home/blankmcu/ros2_ws/src/gps_tools/launch/gps_parser_launch.py"
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
