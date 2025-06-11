@@ -5,8 +5,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /AerialMap1
-        - /AerialMap1/Status1
         - /AerialMap1/Use Local Map1
+        - /Axes1
       Splitter Ratio: 0.61654132604599
     Tree Height: 769
   - Class: rviz_common/Selection
@@ -71,6 +71,13 @@ Visualization Manager:
         Value: false
       Value: true
       Zoom: 16
+    - Class: rviz_default_plugins/Axes
+      Enabled: true
+      Length: 1
+      Name: Axes
+      Radius: 0.5
+      Reference Frame: <Fixed Frame>
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -117,7 +124,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 162.76187133789062
+      Distance: 184.45632934570312
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -132,10 +139,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.8803980946540833
+      Pitch: 0.7603982090950012
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 6.063579082489014
+      Yaw: 6.058579444885254
     Saved: ~
 Window Geometry:
   Displays:
