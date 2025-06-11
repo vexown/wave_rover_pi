@@ -4,12 +4,10 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /Global Options1
-        - /Status1
         - /AerialMap1
         - /AerialMap1/Status1
         - /AerialMap1/Use Local Map1
-      Splitter Ratio: 0.5
+      Splitter Ratio: 0.61654132604599
     Tree Height: 769
   - Class: rviz_common/Selection
     Name: Selection
@@ -35,7 +33,7 @@ Visualization Manager:
     - Alpha: 0.5
       Cell Size: 1
       Class: rviz_default_plugins/Grid
-      Color: 160; 160; 164
+      Color: 165; 29; 45
       Enabled: true
       Line Style:
         Line Width: 0.029999999329447746
@@ -72,7 +70,7 @@ Visualization Manager:
         "Origin Y ": 0
         Value: false
       Value: true
-      Zoom: 10
+      Zoom: 16
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -119,25 +117,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 22.00849151611328
+      Distance: 162.76187133789062
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 2.86102294921875e-06
-        Y: -4.291534423828125e-06
-        Z: 9.5367431640625e-07
-      Focal Shape Fixed Size: true
+        X: 0
+        Y: 0
+        Z: 0
+      Focal Shape Fixed Size: false
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.8403980135917664
+      Pitch: 0.8803980946540833
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 0.5403987169265747
+      Yaw: 6.063579082489014
     Saved: ~
 Window Geometry:
   Displays:
