@@ -26,4 +26,7 @@ ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 map gps_link &
 # The following command launches RViz2, the 3D visualization tool for ROS 2.
 # 'rviz2' is the command to start the RViz2 application.
 # The '-d' option (short for --display-config) specifies an RViz2 configuration file to load.
+# In RViz2, we use a plugin called rviz_satellite to visualize the GPS data coming in from the ESP32 (via the RPi) in a form of NavSatFix messages.
+# Within it, we use the AerialMap display to visualize the map and the GPS data. For more information about rviz_satellite, see the official repo:
+# https://github.com/nobleo/rviz_satellite
 rviz2 -d RVizConfig/rviz_config.rviz
