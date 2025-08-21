@@ -35,7 +35,7 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
         
         # Initialize serial communication attributes
         self.serial_port = None # This will hold our serial port object once opened
-        self.baud_rate = 115200  # Communication speed - must match ESP32 configuration
+        self.baud_rate = 921600  # Communication speed - must match ESP32 configuration
         self.serial_device = '/dev/ttyS0'  # Raspberry Pi serial device path
         
         # Create publisher for broadcasting received UART messages
