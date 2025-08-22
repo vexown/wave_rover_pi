@@ -49,8 +49,8 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
         # Attempt to establish serial connection
         self._initialize_serial_connection()
         
-        # Set up periodic data reading (every 100ms)
-        self.timer = self.create_timer(0.1, self.read_serial)
+        # Set up periodic data reading (every 20ms to keep up with frequent messages sent by ESP32)
+        self.timer = self.create_timer(0.02, self.read_serial)
 
     def _initialize_serial_connection(self):
         """
@@ -98,14 +98,14 @@ class SerialComNode(Node): # Our SerialComNode class inherits from Node (the bas
 
     def read_serial(self):
         """
-        Timer callback method - reads data from serial port every 100ms
+        Timer callback method - reads all available data from serial port every 20ms
         This method is called automatically by the ROS2 timer
         """
         # Check if serial port exists and is open before attempting to read
         if self.serial_port and self.serial_port.is_open:
             try:
-                # Check if there's data waiting in the serial buffer
-                if self.serial_port.in_waiting > 0:
+                # Process all available messages in the buffer to prevent falling behind
+                while self.serial_port.in_waiting > 0:
                     # Read a complete line from serial port
                     received_data = self.serial_port.readline().decode('utf-8').strip()
                     
