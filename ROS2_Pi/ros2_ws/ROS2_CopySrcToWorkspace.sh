@@ -31,6 +31,24 @@ cp -r "${SRC_DIR}" "${DEST_DIR}/"
 
 if [ $? -eq 0 ]; then
     echo "Successfully copied src to ${DEST_DIR}."
+    
+    # Build all ROS2 packages after copying
+    echo "Building all ROS2 packages..."
+    cd "${DEST_DIR}"
+    
+    # Source the ROS2 environment
+    source /opt/ros/jazzy/setup.bash
+    
+    # Build all packages
+    colcon build
+    
+    if [ $? -eq 0 ]; then
+        echo "Successfully built all ROS2 packages."
+        echo "Run 'source ${DEST_DIR}/install/setup.bash' to use the packages."
+    else
+        echo "Error: Failed to build ROS2 packages."
+        exit 1
+    fi
 else
     echo "Error: Failed to copy src to ${DEST_DIR}."
     exit 1
