@@ -50,6 +50,7 @@ class RPiCamPublisher(Node):
         self.capture_thread = None
         self.frame_count = 0
         self.last_log_time = time.time()
+        self.debug_count = 0
         
         # Start camera streaming
         self.start_camera()
@@ -103,6 +104,8 @@ class RPiCamPublisher(Node):
                 '--inline',          # Inline headers for streaming
             ]
             
+            self.get_logger().info(f"Starting rpicam-vid with command: {' '.join(cmd)}")
+            
             # Start the process
             self.rpicam_process = subprocess.Popen(
                 cmd,
@@ -111,12 +114,20 @@ class RPiCamPublisher(Node):
                 bufsize=0
             )
             
+            # Check if process started successfully
+            time.sleep(0.5)  # Give it a moment to start
+            if self.rpicam_process.poll() is not None:
+                # Process has already terminated
+                _, stderr = self.rpicam_process.communicate()
+                self.get_logger().error(f"rpicam-vid failed to start: {stderr.decode()}")
+                return
+            
             # Start capture thread
             self.capture_thread = Thread(target=self.capture_loop)
             self.capture_thread.daemon = True
             self.capture_thread.start()
             
-            self.get_logger().info("Started rpicam-vid streaming process")
+            self.get_logger().info("Started rpicam-vid streaming process successfully")
             
         except Exception as e:
             self.get_logger().error(f"Failed to start camera: {str(e)}")
@@ -125,17 +136,35 @@ class RPiCamPublisher(Node):
     def capture_loop(self):
         """Main capture loop - reads MJPEG stream from rpicam-vid"""
         buffer = b''
+        bytes_read = 0
+        
+        self.get_logger().info("Starting capture loop...")
         
         while self.running and rclpy.ok() and self.rpicam_process:
             try:
+                # Check if process is still running
+                if self.rpicam_process.poll() is not None:
+                    _, stderr = self.rpicam_process.communicate()
+                    self.get_logger().error(f"rpicam-vid process terminated: {stderr.decode()}")
+                    break
+                
                 # Read data from rpicam-vid stdout
                 chunk = self.rpicam_process.stdout.read(4096)
                 if not chunk:
-                    break
+                    self.get_logger().warning("No data received from rpicam-vid")
+                    time.sleep(0.1)
+                    continue
                 
+                bytes_read += len(chunk)
                 buffer += chunk
                 
+                # Debug: Log data reception occasionally
+                self.debug_count += 1
+                if self.debug_count % 100 == 0:  # Every 100 chunks
+                    self.get_logger().info(f"Received {bytes_read} bytes total, buffer size: {len(buffer)}")
+                
                 # Look for JPEG frame boundaries (0xFFD8 = start, 0xFFD9 = end)
+                frames_found = 0
                 while True:
                     start = buffer.find(b'\xff\xd8')
                     if start == -1:
@@ -148,24 +177,35 @@ class RPiCamPublisher(Node):
                     # Extract complete JPEG frame
                     jpeg_data = buffer[start:end+2]
                     buffer = buffer[end+2:]
+                    frames_found += 1
                     
                     # Process the frame
                     self.process_frame(jpeg_data)
+                    
+                if frames_found > 0:
+                    self.get_logger().debug(f"Found and processed {frames_found} frames")
                     
             except Exception as e:
                 if self.running:
                     self.get_logger().error(f"Capture loop error: {str(e)}")
                 break
+        
+        self.get_logger().info("Capture loop ended")
     
     def process_frame(self, jpeg_data):
         """Process a single JPEG frame"""
         try:
+            self.get_logger().debug(f"Processing JPEG frame of {len(jpeg_data)} bytes")
+            
             # Decode JPEG to OpenCV format
             nparr = np.frombuffer(jpeg_data, np.uint8)
             cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if cv_image is None:
+                self.get_logger().warning("Failed to decode JPEG frame")
                 return
+            
+            self.get_logger().debug(f"Decoded image: {cv_image.shape}")
             
             # Create timestamp
             now = self.get_clock().now()
@@ -211,6 +251,7 @@ class RPiCamPublisher(Node):
     
     def destroy_node(self):
         """Clean up resources"""
+        self.get_logger().info("Shutting down camera publisher...")
         self.running = False
         
         # Stop rpicam-vid process
