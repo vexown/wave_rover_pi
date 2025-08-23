@@ -7,7 +7,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ######################################################################
 # --- Configuring Camera Parameters ---
 ######################################################################
-TARGET_FPS=10 # Set your desired FPS
+TARGET_FPS=30 # Set your desired FPS
 WIDTH=800
 HEIGHT=600
 FORMAT="rgb"  # rgb or bgr
