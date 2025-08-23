@@ -96,15 +96,14 @@ class RPiCamPublisher(Node):
                 self.get_logger().error("GStreamer or libcamera plugin not available")
                 return
             
-            # Build GStreamer pipeline for libcamera -> MJPEG streaming
-            pipeline = (
-                f"libcamerasrc ! "
-                f"video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1 ! "
-                f"jpegenc quality={self.jpeg_quality} ! "
-                f"fdsink fd=1"
-            )
-            
-            cmd = ['gst-launch-1.0', '-q', pipeline]
+            # Build GStreamer command with proper syntax
+            cmd = [
+                'gst-launch-1.0', '-q',
+                'libcamerasrc',
+                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',
+                '!', 'jpegenc', f'quality={self.jpeg_quality}',
+                '!', 'fdsink', 'fd=1'
+            ]
             
             self.get_logger().info(f"Starting GStreamer pipeline: {' '.join(cmd)}")
             
