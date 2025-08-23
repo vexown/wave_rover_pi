@@ -46,7 +46,7 @@ class RPiCamPublisher(Node):
         
         # Initialize camera streaming
         self.running = True
-        self.rpicam_process = None
+        self.gst_process = None
         self.capture_thread = None
         self.frame_count = 0
         self.last_log_time = time.time()
@@ -89,25 +89,27 @@ class RPiCamPublisher(Node):
         return compressed_msg
     
     def start_camera(self):
-        """Start rpicam-vid process for continuous streaming"""
+        """Start GStreamer libcamera pipeline for continuous streaming"""
         try:
-            # Build rpicam-vid command for continuous streaming
-            cmd = [
-                'rpicam-vid',
-                '--output', '-',  # Output to stdout
-                '--width', str(self.width),
-                '--height', str(self.height),
-                '--framerate', str(self.fps),
-                '--timeout', '0',  # Run indefinitely
-                '--nopreview',     # No preview window
-                '--codec', 'mjpeg',  # Use MJPEG for easy frame extraction
-                '--inline',          # Inline headers for streaming
-            ]
+            # Check if gstreamer is available
+            if not self.check_gstreamer():
+                self.get_logger().error("GStreamer or libcamera plugin not available")
+                return
             
-            self.get_logger().info(f"Starting rpicam-vid with command: {' '.join(cmd)}")
+            # Build GStreamer pipeline for libcamera -> MJPEG streaming
+            pipeline = (
+                f"libcamerasrc ! "
+                f"video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1 ! "
+                f"jpegenc quality={self.jpeg_quality} ! "
+                f"fdsink fd=1"
+            )
+            
+            cmd = ['gst-launch-1.0', '-q', pipeline]
+            
+            self.get_logger().info(f"Starting GStreamer pipeline: {' '.join(cmd)}")
             
             # Start the process
-            self.rpicam_process = subprocess.Popen(
+            self.gst_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -116,10 +118,10 @@ class RPiCamPublisher(Node):
             
             # Check if process started successfully
             time.sleep(0.5)  # Give it a moment to start
-            if self.rpicam_process.poll() is not None:
+            if self.gst_process.poll() is not None:
                 # Process has already terminated
-                _, stderr = self.rpicam_process.communicate()
-                self.get_logger().error(f"rpicam-vid failed to start: {stderr.decode()}")
+                _, stderr = self.gst_process.communicate()
+                self.get_logger().error(f"GStreamer failed to start: {stderr.decode()}")
                 return
             
             # Start capture thread
@@ -127,31 +129,52 @@ class RPiCamPublisher(Node):
             self.capture_thread.daemon = True
             self.capture_thread.start()
             
-            self.get_logger().info("Started rpicam-vid streaming process successfully")
+            self.get_logger().info("Started GStreamer libcamera pipeline successfully")
             
         except Exception as e:
             self.get_logger().error(f"Failed to start camera: {str(e)}")
             self.running = False
     
+    def check_gstreamer(self):
+        """Check if GStreamer and libcamera plugin are available"""
+        try:
+            # Check if gst-launch-1.0 is available
+            result1 = subprocess.run(['which', 'gst-launch-1.0'], capture_output=True)
+            if result1.returncode != 0:
+                self.get_logger().error("gst-launch-1.0 not found. Install with: sudo apt install gstreamer1.0-tools")
+                return False
+            
+            # Check if libcamerasrc plugin is available
+            result2 = subprocess.run(['gst-inspect-1.0', 'libcamerasrc'], capture_output=True)
+            if result2.returncode != 0:
+                self.get_logger().error("libcamerasrc plugin not found. Install with: sudo apt install gstreamer1.0-libcamera")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            self.get_logger().error(f"Error checking GStreamer: {str(e)}")
+            return False
+    
     def capture_loop(self):
-        """Main capture loop - reads MJPEG stream from rpicam-vid"""
+        """Main capture loop - reads MJPEG stream from GStreamer"""
         buffer = b''
         bytes_read = 0
         
-        self.get_logger().info("Starting capture loop...")
+        self.get_logger().info("Starting GStreamer capture loop...")
         
-        while self.running and rclpy.ok() and self.rpicam_process:
+        while self.running and rclpy.ok() and self.gst_process:
             try:
                 # Check if process is still running
-                if self.rpicam_process.poll() is not None:
-                    _, stderr = self.rpicam_process.communicate()
-                    self.get_logger().error(f"rpicam-vid process terminated: {stderr.decode()}")
+                if self.gst_process.poll() is not None:
+                    _, stderr = self.gst_process.communicate()
+                    self.get_logger().error(f"GStreamer process terminated: {stderr.decode()}")
                     break
                 
-                # Read data from rpicam-vid stdout
-                chunk = self.rpicam_process.stdout.read(4096)
+                # Read data from GStreamer stdout
+                chunk = self.gst_process.stdout.read(4096)
                 if not chunk:
-                    self.get_logger().warning("No data received from rpicam-vid")
+                    self.get_logger().warning("No data received from GStreamer")
                     time.sleep(0.1)
                     continue
                 
@@ -254,14 +277,14 @@ class RPiCamPublisher(Node):
         self.get_logger().info("Shutting down camera publisher...")
         self.running = False
         
-        # Stop rpicam-vid process
-        if self.rpicam_process:
+        # Stop GStreamer process
+        if self.gst_process:
             try:
-                self.rpicam_process.terminate()
-                self.rpicam_process.wait(timeout=2)
+                self.gst_process.terminate()
+                self.gst_process.wait(timeout=2)
             except:
-                if self.rpicam_process.poll() is None:
-                    self.rpicam_process.kill()
+                if self.gst_process.poll() is None:
+                    self.gst_process.kill()
         
         # Wait for capture thread to finish
         if self.capture_thread:

@@ -1,6 +1,6 @@
 #!/bin/bash
-# This script starts the custom RPi camera node using rpicam-apps
-# This avoids the libcamera IPA proxy issues with camera_ros
+# This script starts the custom RPi camera node using GStreamer with libcamera
+# This avoids the libcamera IPA proxy issues with camera_ros and rpicam-vid symbol issues
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
@@ -18,10 +18,17 @@ JPEG_QUALITY=80  # JPEG quality (1-100, higher = better quality, larger size)
 # Make sure the Python script is executable
 chmod +x "$SCRIPT_DIR/rpicam_publisher.py"
 
-# Check if rpicam-vid is available (changed from rpicam-still)
-if ! command -v rpicam-vid &> /dev/null; then
-    echo "Error: rpicam-vid not found. Please install it:"
-    echo "sudo apt update && sudo apt install -y rpicam-apps"
+# Check if GStreamer is available
+if ! command -v gst-launch-1.0 &> /dev/null; then
+    echo "Error: gst-launch-1.0 not found. Please install it:"
+    echo "sudo apt update && sudo apt install -y gstreamer1.0-tools"
+    exit 1
+fi
+
+# Check if libcamera GStreamer plugin is available
+if ! gst-inspect-1.0 libcamerasrc &> /dev/null; then
+    echo "Error: libcamerasrc plugin not found. Please install it:"
+    echo "sudo apt update && sudo apt install -y gstreamer1.0-libcamera"
     exit 1
 fi
 
@@ -32,7 +39,7 @@ python3 -c "import cv2, cv_bridge" 2>/dev/null || {
     sudo apt install -y python3-opencv ros-jazzy-cv-bridge ros-jazzy-image-transport
 }
 
-echo "Starting RPi Camera Publisher with MJPEG streaming..."
+echo "Starting RPi Camera Publisher with GStreamer libcamera..."
 echo "Camera settings: ${WIDTH}x${HEIGHT} @ ${TARGET_FPS}fps, format: ${FORMAT}"
 echo "Compressed images: ${PUBLISH_COMPRESSED}, JPEG quality: ${JPEG_QUALITY}%"
 
