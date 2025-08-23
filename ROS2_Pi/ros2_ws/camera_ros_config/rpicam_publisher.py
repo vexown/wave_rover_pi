@@ -6,9 +6,9 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 import subprocess
-import tempfile
 import os
 import time
+import signal
 from threading import Thread
 
 class RPiCamPublisher(Node):
@@ -30,9 +30,6 @@ class RPiCamPublisher(Node):
         self.publish_compressed = self.get_parameter('publish_compressed').value
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
         
-        # Calculate frame interval
-        self.frame_interval = 1.0 / self.fps
-        
         # Publishers
         self.image_pub = self.create_publisher(Image, '/camera/image_raw', 10)
         self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', 10)
@@ -47,16 +44,15 @@ class RPiCamPublisher(Node):
         # Camera info message
         self.camera_info_msg = self.create_camera_info()
         
-        # Create temporary file for image capture
-        self.temp_file = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
-        self.temp_filename = self.temp_file.name
-        self.temp_file.close()
-        
-        # Start camera capture
+        # Initialize camera streaming
         self.running = True
-        self.capture_thread = Thread(target=self.capture_loop)
-        self.capture_thread.daemon = True
-        self.capture_thread.start()
+        self.rpicam_process = None
+        self.capture_thread = None
+        self.frame_count = 0
+        self.last_log_time = time.time()
+        
+        # Start camera streaming
+        self.start_camera()
         
         self.get_logger().info(f'RPiCam Publisher started - {self.width}x{self.height}@{self.fps}fps')
         if self.publish_compressed:
@@ -91,125 +87,158 @@ class RPiCamPublisher(Node):
         
         return compressed_msg
     
-    def capture_image(self):
-        """Capture a single image using rpicam-still"""
+    def start_camera(self):
+        """Start rpicam-vid process for continuous streaming"""
         try:
-            # Build rpicam-still command
+            # Build rpicam-vid command for continuous streaming
             cmd = [
-                'rpicam-still',
-                '--output', self.temp_filename,
+                'rpicam-vid',
+                '--output', '-',  # Output to stdout
                 '--width', str(self.width),
                 '--height', str(self.height),
-                '--timeout', '1',  # Very short timeout for fast capture
+                '--framerate', str(self.fps),
+                '--timeout', '0',  # Run indefinitely
                 '--nopreview',     # No preview window
-                '--immediate',     # Capture immediately
-                '--encoding', 'jpg'
+                '--codec', 'mjpeg',  # Use MJPEG for easy frame extraction
+                '--inline',          # Inline headers for streaming
             ]
             
-            # Execute command with timeout
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=2.0)
+            # Start the process
+            self.rpicam_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0
+            )
             
-            if result.returncode == 0 and os.path.exists(self.temp_filename):
-                # Read the captured image
-                cv_image = cv2.imread(self.temp_filename, cv2.IMREAD_COLOR)
-                if cv_image is not None:
-                    return cv_image
-                else:
-                    self.get_logger().warning("Failed to read captured image file")
-            else:
-                self.get_logger().warning(f"rpicam-still failed: {result.stderr}")
-                
-        except subprocess.TimeoutExpired:
-            self.get_logger().warning("rpicam-still capture timeout")
+            # Start capture thread
+            self.capture_thread = Thread(target=self.capture_loop)
+            self.capture_thread.daemon = True
+            self.capture_thread.start()
+            
+            self.get_logger().info("Started rpicam-vid streaming process")
+            
         except Exception as e:
-            self.get_logger().error(f"Capture error: {str(e)}")
-        
-        return None
+            self.get_logger().error(f"Failed to start camera: {str(e)}")
+            self.running = False
     
     def capture_loop(self):
-        """Main capture loop"""
-        last_capture_time = time.time()
+        """Main capture loop - reads MJPEG stream from rpicam-vid"""
+        buffer = b''
         
-        while self.running and rclpy.ok():
-            start_time = time.time()
-            
-            # Capture image
-            cv_image = self.capture_image()
-            
-            if cv_image is not None:
-                # Create timestamp
-                now = self.get_clock().now()
+        while self.running and rclpy.ok() and self.rpicam_process:
+            try:
+                # Read data from rpicam-vid stdout
+                chunk = self.rpicam_process.stdout.read(4096)
+                if not chunk:
+                    break
                 
-                # Convert BGR to RGB if needed
-                if self.format == 'rgb':
-                    cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-                    encoding = 'rgb8'
-                else:
-                    encoding = 'bgr8'
+                buffer += chunk
                 
-                # Create and publish raw image
-                try:
-                    img_msg = self.bridge.cv2_to_imgmsg(cv_image, encoding=encoding)
-                    img_msg.header.stamp = now.to_msg()
-                    img_msg.header.frame_id = "camera_link"
-                    self.image_pub.publish(img_msg)
+                # Look for JPEG frame boundaries (0xFFD8 = start, 0xFFD9 = end)
+                while True:
+                    start = buffer.find(b'\xff\xd8')
+                    if start == -1:
+                        break
                     
-                    # Publish camera info
-                    self.camera_info_msg.header.stamp = now.to_msg()
-                    self.camera_info_pub.publish(self.camera_info_msg)
+                    end = buffer.find(b'\xff\xd9', start)
+                    if end == -1:
+                        break
                     
-                    # Publish compressed image if enabled
-                    if self.publish_compressed:
-                        # Convert back to BGR for JPEG encoding
-                        if self.format == 'rgb':
-                            bgr_image = cv2.cvtColor(cv_image, cv2.COLOR_RGB2BGR)
-                        else:
-                            bgr_image = cv_image
-                        
-                        compressed_msg = self.create_compressed_image(bgr_image, now.to_msg())
-                        self.compressed_pub.publish(compressed_msg)
+                    # Extract complete JPEG frame
+                    jpeg_data = buffer[start:end+2]
+                    buffer = buffer[end+2:]
                     
-                    # Log performance occasionally
-                    current_time = time.time()
-                    if current_time - last_capture_time > 5.0:  # Every 5 seconds
-                        actual_fps = 1.0 / (current_time - start_time) if (current_time - start_time) > 0 else 0
-                        self.get_logger().info(f"Capture performance: {actual_fps:.1f} fps target, actual loop time: {(current_time - start_time):.3f}s")
-                        last_capture_time = current_time
-                        
-                except Exception as e:
-                    self.get_logger().error(f"Publishing error: {str(e)}")
+                    # Process the frame
+                    self.process_frame(jpeg_data)
+                    
+            except Exception as e:
+                if self.running:
+                    self.get_logger().error(f"Capture loop error: {str(e)}")
+                break
+    
+    def process_frame(self, jpeg_data):
+        """Process a single JPEG frame"""
+        try:
+            # Decode JPEG to OpenCV format
+            nparr = np.frombuffer(jpeg_data, np.uint8)
+            cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
-            # Sleep to maintain target FPS
-            elapsed = time.time() - start_time
-            sleep_time = max(0, self.frame_interval - elapsed)
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            if cv_image is None:
+                return
+            
+            # Create timestamp
+            now = self.get_clock().now()
+            
+            # Convert BGR to RGB if needed
+            if self.format == 'rgb':
+                display_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+                encoding = 'rgb8'
+            else:
+                display_image = cv_image
+                encoding = 'bgr8'
+            
+            # Create and publish raw image
+            img_msg = self.bridge.cv2_to_imgmsg(display_image, encoding=encoding)
+            img_msg.header.stamp = now.to_msg()
+            img_msg.header.frame_id = "camera_link"
+            self.image_pub.publish(img_msg)
+            
+            # Publish camera info
+            self.camera_info_msg.header.stamp = now.to_msg()
+            self.camera_info_pub.publish(self.camera_info_msg)
+            
+            # Publish compressed image if enabled (reuse the JPEG data)
+            if self.publish_compressed:
+                compressed_msg = CompressedImage()
+                compressed_msg.header.stamp = now.to_msg()
+                compressed_msg.header.frame_id = "camera_link"
+                compressed_msg.format = "jpeg"
+                compressed_msg.data = jpeg_data
+                self.compressed_pub.publish(compressed_msg)
+            
+            # Log performance occasionally
+            self.frame_count += 1
+            current_time = time.time()
+            if current_time - self.last_log_time > 5.0:  # Every 5 seconds
+                actual_fps = self.frame_count / (current_time - self.last_log_time)
+                self.get_logger().info(f"Publishing at {actual_fps:.1f} fps (target: {self.fps} fps)")
+                self.frame_count = 0
+                self.last_log_time = current_time
+                
+        except Exception as e:
+            self.get_logger().error(f"Frame processing error: {str(e)}")
     
     def destroy_node(self):
         """Clean up resources"""
         self.running = False
-        if hasattr(self, 'capture_thread'):
-            self.capture_thread.join(timeout=2.0)
         
-        # Clean up temporary file
-        try:
-            if os.path.exists(self.temp_filename):
-                os.unlink(self.temp_filename)
-        except:
-            pass
+        # Stop rpicam-vid process
+        if self.rpicam_process:
+            try:
+                self.rpicam_process.terminate()
+                self.rpicam_process.wait(timeout=2)
+            except:
+                if self.rpicam_process.poll() is None:
+                    self.rpicam_process.kill()
+        
+        # Wait for capture thread to finish
+        if self.capture_thread:
+            self.capture_thread.join(timeout=2.0)
         
         super().destroy_node()
 
 def main(args=None):
     rclpy.init(args=args)
     
+    publisher = None
     try:
         publisher = RPiCamPublisher()
         rclpy.spin(publisher)
     except KeyboardInterrupt:
         print("Shutting down RPiCam Publisher...")
     finally:
-        if 'publisher' in locals():
+        if publisher:
             publisher.destroy_node()
         rclpy.shutdown()
 

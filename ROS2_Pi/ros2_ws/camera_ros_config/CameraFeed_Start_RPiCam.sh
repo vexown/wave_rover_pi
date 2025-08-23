@@ -18,9 +18,9 @@ JPEG_QUALITY=80  # JPEG quality (1-100, higher = better quality, larger size)
 # Make sure the Python script is executable
 chmod +x "$SCRIPT_DIR/rpicam_publisher.py"
 
-# Check if rpicam-still is available
-if ! command -v rpicam-still &> /dev/null; then
-    echo "Error: rpicam-still not found. Please install it:"
+# Check if rpicam-vid is available (changed from rpicam-still)
+if ! command -v rpicam-vid &> /dev/null; then
+    echo "Error: rpicam-vid not found. Please install it:"
     echo "sudo apt update && sudo apt install -y rpicam-apps"
     exit 1
 fi
@@ -32,7 +32,7 @@ python3 -c "import cv2, cv_bridge" 2>/dev/null || {
     sudo apt install -y python3-opencv ros-jazzy-cv-bridge ros-jazzy-image-transport
 }
 
-echo "Starting RPi Camera Publisher..."
+echo "Starting RPi Camera Publisher with MJPEG streaming..."
 echo "Camera settings: ${WIDTH}x${HEIGHT} @ ${TARGET_FPS}fps, format: ${FORMAT}"
 echo "Compressed images: ${PUBLISH_COMPRESSED}, JPEG quality: ${JPEG_QUALITY}%"
 
