@@ -23,6 +23,8 @@ class CompressedImageSubscriber(Node):
             return
         try:
             cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding="bgr8")
+            # Rotate image 180 degrees to flip it upside down
+            cv_image = cv2.rotate(cv_image, cv2.ROTATE_180)
             self.get_logger().debug('Received and decoded compressed image')
         except Exception as e:
             self.get_logger().error(f'Error decoding compressed image: {e}')
