@@ -1,14 +1,14 @@
 #!/bin/bash
-# Copy the src directory from the repository to the ROS 2 workspace.
+# Copy the entire ROS 2 workspace from the repository to the home directory.
 
 # Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 # Define the source directory
-SRC_DIR="${SCRIPT_DIR}/src"
+SRC_DIR="${SCRIPT_DIR}/ros2_ws"
 
 # Define the destination directory
-DEST_DIR="${HOME}/ros2_ws"
+DEST_DIR="${HOME}"
 
 # Check if the source directory exists
 if [ ! -d "${SRC_DIR}" ]; then
@@ -19,20 +19,20 @@ fi
 # Create the destination directory if it doesn't exist
 mkdir -p "${DEST_DIR}"
 
-# First delete the existing src directory in the destination
-if [ -d "${DEST_DIR}/src" ]; then
-    echo "Deleting existing src directory in ${DEST_DIR}..."
-    sudo rm -rf "${DEST_DIR}/src"
+# First delete the existing ros2_ws directory in the destination
+if [ -d "${DEST_DIR}/ros2_ws" ]; then
+    echo "Deleting existing ros2_ws directory in ${DEST_DIR}..."
+    sudo rm -rf "${DEST_DIR}/ros2_ws"
 fi
 
-# Then copy the src directory to the destination
+# Then copy the ros2_ws directory to the destination
 echo "Copying ${SRC_DIR} to ${DEST_DIR}..."
 cp -r "${SRC_DIR}" "${DEST_DIR}/"
 
 if [ $? -eq 0 ]; then
-    echo "Successfully copied src to ${DEST_DIR}."
+    echo "Successfully copied ros2_ws to ${DEST_DIR}."
 else
-    echo "Error: Failed to copy src to ${DEST_DIR}."
+    echo "Error: Failed to copy ros2_ws to ${DEST_DIR}."
     exit 1
 fi
 
