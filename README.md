@@ -43,5 +43,5 @@ The main nodes are:
 ### On the PC
 
 -   **View Camera Stream:** Run `camera_stream_viewer.py` in `PC-side-Software`.
--   **Visualize Robot Data:** Use the ROS2 tools and RViz with the provided configuration (`PC-side-Software/ROS2_PC/RVizConfig/`) to visualize data from the robot. The `my_camera_pkg` can be used to subscribe to image topics.
+-   **Visualize Robot Data:** Use the ROS2 tools and RViz with the provided configuration (`PC-side-Software/ROS2_PC/RVizConfig/`) to visualize data from the robot. The `camera_feed_subscriber` can be used to subscribe to image topics.
 

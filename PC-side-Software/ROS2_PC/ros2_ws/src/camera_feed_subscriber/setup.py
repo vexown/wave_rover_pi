@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'my_camera_pkg'
+package_name = 'camera_feed_subscriber'
 
 setup(
     name=package_name,
@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-		'image_subscriber = my_camera_pkg.image_subscriber:main',
+		'image_subscriber = camera_feed_subscriber.image_subscriber:main',
         ],
     },
 )
