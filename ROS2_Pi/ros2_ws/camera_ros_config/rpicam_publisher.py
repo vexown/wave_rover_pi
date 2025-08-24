@@ -11,6 +11,9 @@ import time
 import signal
 from threading import Thread
 
+# Global shutdown flag
+shutdown_requested = False
+
 class RPiCamPublisher(Node):
     def __init__(self):
         super().__init__('rpicam_publisher')
@@ -96,32 +99,29 @@ class RPiCamPublisher(Node):
                 self.get_logger().error("GStreamer or libcamera plugin not available")
                 return
             
-            # Build GStreamer command with improved buffer management and error handling
+            # Use a simpler, more stable pipeline
             cmd = [
-                'gst-launch-1.0', '-e',  # Enable EOS handling
+                'gst-launch-1.0', '-q',
                 'libcamerasrc',
-                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1,format=NV12',
-                '!', 'videoconvert',  # Add explicit format conversion
-                '!', 'video/x-raw,format=I420',  # Standardize on I420 format
+                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',
                 '!', 'jpegenc', f'quality={self.jpeg_quality}',
-                '!', 'multifilesink', 'location=/dev/stdout', 'next-file=2'  # Use multifilesink instead of fdsink
+                '!', 'fdsink', 'fd=1'
             ]
             
             self.get_logger().info(f"Starting GStreamer pipeline: {' '.join(cmd)}")
             
-            # Start the process with better error handling
+            # Start the process
             self.gst_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0,
-                preexec_fn=os.setsid  # Create new process group for better cleanup
+                preexec_fn=os.setsid
             )
             
-            # Check if process started successfully with longer timeout
-            time.sleep(2.0)  # Give more time for libcamera initialization
+            # Check if process started successfully
+            time.sleep(2.0)
             if self.gst_process.poll() is not None:
-                # Process has already terminated
                 _, stderr = self.gst_process.communicate()
                 self.get_logger().error(f"GStreamer failed to start: {stderr.decode()}")
                 return
@@ -183,75 +183,28 @@ class RPiCamPublisher(Node):
             self.get_logger().error(f"Error restarting camera: {str(e)}")
     
     def capture_loop(self):
-        """Main capture loop - reads MJPEG stream from GStreamer with restart capability"""
+        """Main capture loop - reads MJPEG stream from GStreamer"""
         buffer = b''
-        bytes_read = 0
-        restart_count = 0
-        max_restarts = 3
-        no_data_count = 0
-        max_no_data = 50  # Max consecutive reads with no data before restart
         
         self.get_logger().info("Starting GStreamer capture loop...")
         
-        while self.running and rclpy.ok() and restart_count < max_restarts:
+        while self.running and rclpy.ok() and self.gst_process and not shutdown_requested:
             try:
                 # Check if process is still running
-                if self.gst_process and self.gst_process.poll() is not None:
+                if self.gst_process.poll() is not None:
                     _, stderr = self.gst_process.communicate()
                     self.get_logger().error(f"GStreamer process terminated: {stderr.decode()}")
-                    
-                    # Attempt restart if within limit
-                    if restart_count < max_restarts and self.running:
-                        restart_count += 1
-                        self.get_logger().info(f"Attempting camera restart {restart_count}/{max_restarts}")
-                        time.sleep(2.0)  # Wait before restart
-                        self.restart_camera()
-                        buffer = b''  # Clear buffer
-                        no_data_count = 0
-                        continue
-                    else:
-                        break
-                
-                if not self.gst_process:
                     break
                 
-                # Read data from GStreamer stdout with timeout
-                try:
-                    chunk = self.gst_process.stdout.read(4096)
-                except Exception as e:
-                    self.get_logger().warning(f"Read error: {e}")
-                    time.sleep(0.1)
-                    continue
-                
+                # Read data from GStreamer stdout
+                chunk = self.gst_process.stdout.read(4096)
                 if not chunk:
-                    no_data_count += 1
-                    if no_data_count > max_no_data:
-                        self.get_logger().warning(f"No data for {no_data_count} reads - restarting camera")
-                        restart_count += 1
-                        if restart_count < max_restarts and self.running:
-                            self.get_logger().info(f"Attempting camera restart {restart_count}/{max_restarts}")
-                            time.sleep(2.0)
-                            self.restart_camera()
-                            buffer = b''
-                            no_data_count = 0
-                            continue
-                        else:
-                            break
                     time.sleep(0.1)
                     continue
                 
-                # Reset no data counter on successful read
-                no_data_count = 0
-                bytes_read += len(chunk)
                 buffer += chunk
                 
-                # Debug: Log data reception occasionally
-                self.debug_count += 1
-                if self.debug_count % 100 == 0:  # Every 100 chunks
-                    self.get_logger().info(f"Received {bytes_read} bytes total, buffer size: {len(buffer)}")
-                
                 # Look for JPEG frame boundaries (0xFFD8 = start, 0xFFD9 = end)
-                frames_found = 0
                 while True:
                     start = buffer.find(b'\xff\xd8')
                     if start == -1:
@@ -264,13 +217,10 @@ class RPiCamPublisher(Node):
                     # Extract complete JPEG frame
                     jpeg_data = buffer[start:end+2]
                     buffer = buffer[end+2:]
-                    frames_found += 1
                     
-                    # Process the frame
-                    self.process_frame(jpeg_data)
-                    
-                if frames_found > 0:
-                    self.get_logger().debug(f"Found and processed {frames_found} frames")
+                    # Skip obviously corrupt frames
+                    if len(jpeg_data) > 1000 and len(jpeg_data) < 100000:
+                        self.process_frame(jpeg_data)
                     
             except Exception as e:
                 if self.running:
@@ -338,7 +288,11 @@ class RPiCamPublisher(Node):
     
     def destroy_node(self):
         """Clean up resources"""
-        self.get_logger().info("Shutting down camera publisher...")
+        try:
+            self.get_logger().info("Shutting down camera publisher...")
+        except:
+            print("Shutting down camera publisher...")
+        
         self.running = False
         
         # Stop GStreamer process
@@ -351,28 +305,73 @@ class RPiCamPublisher(Node):
                 try:
                     # Force kill if needed
                     os.killpg(os.getpgid(self.gst_process.pid), signal.SIGKILL)
+                    self.gst_process.wait(timeout=1)
                 except:
                     pass
+            self.gst_process = None
         
         # Wait for capture thread to finish
         if self.capture_thread:
             self.capture_thread.join(timeout=3.0)
         
-        super().destroy_node()
+        try:
+            super().destroy_node()
+        except Exception as e:
+            print(f"Warning: Error in parent destroy_node: {e}")
 
 def main(args=None):
-    rclpy.init(args=args)
+    # Set up signal handlers for graceful shutdown
+    import signal
+    import sys
+    
+    def signal_handler(signum, frame):
+        print(f"\nReceived signal {signum}, shutting down gracefully...")
+        global shutdown_requested
+        shutdown_requested = True
+    
+    global shutdown_requested
+    shutdown_requested = False
+    
+    # Register signal handlers
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     publisher = None
+    rclpy_initialized = False
+    
     try:
+        rclpy.init(args=args)
+        rclpy_initialized = True
+        
         publisher = RPiCamPublisher()
-        rclpy.spin(publisher)
+        
+        # Custom spin loop with shutdown check
+        while rclpy.ok() and not shutdown_requested:
+            try:
+                rclpy.spin_once(publisher, timeout_sec=0.1)
+            except KeyboardInterrupt:
+                break
+        
     except KeyboardInterrupt:
-        print("Shutting down RPiCam Publisher...")
+        print("Keyboard interrupt received...")
+    except Exception as e:
+        print(f"Error in main: {e}")
     finally:
+        print("Cleaning up...")
         if publisher:
-            publisher.destroy_node()
-        rclpy.shutdown()
+            try:
+                publisher.destroy_node()
+            except Exception as e:
+                print(f"Error destroying node: {e}")
+        
+        if rclpy_initialized:
+            try:
+                if rclpy.ok():
+                    rclpy.shutdown()
+            except Exception as e:
+                print(f"Error shutting down rclpy: {e}")
+        
+        print("Shutdown complete.")
 
 if __name__ == '__main__':
     main()

@@ -8,12 +8,12 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ######################################################################
 # --- Configuring Camera Parameters ---
 ######################################################################
-TARGET_FPS=30 # Set your desired FPS
+TARGET_FPS=15 # Reduced FPS for stability - high FPS causes JPEG corruption
 WIDTH=800
 HEIGHT=600
 FORMAT="rgb"  # rgb or bgr
 PUBLISH_COMPRESSED=true  # Set to true to publish compressed images
-JPEG_QUALITY=80  # JPEG quality (1-100, higher = better quality, larger size)
+JPEG_QUALITY=75  # Reduced quality for less CPU load (1-100, higher = better quality, larger size)
 ######################################################################
 
 echo "=== RPi Camera Publisher Setup & Start ==="
@@ -193,11 +193,6 @@ fi
 echo "All checks passed! Starting RPi Camera Publisher..."
 echo "Press Ctrl+C to stop the camera feed"
 echo
-
-# Set environment variables for better libcamera stability
-export LIBCAMERA_LOG_LEVELS="*:ERROR"  # Reduce log noise
-export GST_DEBUG_NO_COLOR=1             # Disable color in GStreamer debug
-export GST_DEBUG=2                      # Set moderate debug level
 
 # Start the camera publisher
 exec python3 "$SCRIPT_DIR/rpicam_publisher.py" \
