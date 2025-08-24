@@ -96,27 +96,30 @@ class RPiCamPublisher(Node):
                 self.get_logger().error("GStreamer or libcamera plugin not available")
                 return
             
-            # Build GStreamer command with proper syntax
+            # Build GStreamer command with improved buffer management and error handling
             cmd = [
-                'gst-launch-1.0', '-q',
+                'gst-launch-1.0', '-e',  # Enable EOS handling
                 'libcamerasrc',
-                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',
+                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1,format=NV12',
+                '!', 'videoconvert',  # Add explicit format conversion
+                '!', 'video/x-raw,format=I420',  # Standardize on I420 format
                 '!', 'jpegenc', f'quality={self.jpeg_quality}',
-                '!', 'fdsink', 'fd=1'
+                '!', 'multifilesink', 'location=/dev/stdout', 'next-file=2'  # Use multifilesink instead of fdsink
             ]
             
             self.get_logger().info(f"Starting GStreamer pipeline: {' '.join(cmd)}")
             
-            # Start the process
+            # Start the process with better error handling
             self.gst_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                bufsize=0
+                bufsize=0,
+                preexec_fn=os.setsid  # Create new process group for better cleanup
             )
             
-            # Check if process started successfully
-            time.sleep(0.5)  # Give it a moment to start
+            # Check if process started successfully with longer timeout
+            time.sleep(2.0)  # Give more time for libcamera initialization
             if self.gst_process.poll() is not None:
                 # Process has already terminated
                 _, stderr = self.gst_process.communicate()
@@ -155,28 +158,90 @@ class RPiCamPublisher(Node):
             self.get_logger().error(f"Error checking GStreamer: {str(e)}")
             return False
     
+    def restart_camera(self):
+        """Restart the camera pipeline"""
+        try:
+            # Stop current process
+            if self.gst_process:
+                try:
+                    os.killpg(os.getpgid(self.gst_process.pid), signal.SIGTERM)
+                    self.gst_process.wait(timeout=3)
+                except:
+                    try:
+                        os.killpg(os.getpgid(self.gst_process.pid), signal.SIGKILL)
+                    except:
+                        pass
+                self.gst_process = None
+            
+            # Give camera hardware time to reset
+            time.sleep(3.0)
+            
+            # Restart camera
+            self.start_camera()
+            
+        except Exception as e:
+            self.get_logger().error(f"Error restarting camera: {str(e)}")
+    
     def capture_loop(self):
-        """Main capture loop - reads MJPEG stream from GStreamer"""
+        """Main capture loop - reads MJPEG stream from GStreamer with restart capability"""
         buffer = b''
         bytes_read = 0
+        restart_count = 0
+        max_restarts = 3
+        no_data_count = 0
+        max_no_data = 50  # Max consecutive reads with no data before restart
         
         self.get_logger().info("Starting GStreamer capture loop...")
         
-        while self.running and rclpy.ok() and self.gst_process:
+        while self.running and rclpy.ok() and restart_count < max_restarts:
             try:
                 # Check if process is still running
-                if self.gst_process.poll() is not None:
+                if self.gst_process and self.gst_process.poll() is not None:
                     _, stderr = self.gst_process.communicate()
                     self.get_logger().error(f"GStreamer process terminated: {stderr.decode()}")
+                    
+                    # Attempt restart if within limit
+                    if restart_count < max_restarts and self.running:
+                        restart_count += 1
+                        self.get_logger().info(f"Attempting camera restart {restart_count}/{max_restarts}")
+                        time.sleep(2.0)  # Wait before restart
+                        self.restart_camera()
+                        buffer = b''  # Clear buffer
+                        no_data_count = 0
+                        continue
+                    else:
+                        break
+                
+                if not self.gst_process:
                     break
                 
-                # Read data from GStreamer stdout
-                chunk = self.gst_process.stdout.read(4096)
-                if not chunk:
-                    self.get_logger().warning("No data received from GStreamer")
+                # Read data from GStreamer stdout with timeout
+                try:
+                    chunk = self.gst_process.stdout.read(4096)
+                except Exception as e:
+                    self.get_logger().warning(f"Read error: {e}")
                     time.sleep(0.1)
                     continue
                 
+                if not chunk:
+                    no_data_count += 1
+                    if no_data_count > max_no_data:
+                        self.get_logger().warning(f"No data for {no_data_count} reads - restarting camera")
+                        restart_count += 1
+                        if restart_count < max_restarts and self.running:
+                            self.get_logger().info(f"Attempting camera restart {restart_count}/{max_restarts}")
+                            time.sleep(2.0)
+                            self.restart_camera()
+                            buffer = b''
+                            no_data_count = 0
+                            continue
+                        else:
+                            break
+                    time.sleep(0.1)
+                    continue
+                
+                # Reset no data counter on successful read
+                no_data_count = 0
                 bytes_read += len(chunk)
                 buffer += chunk
                 
@@ -279,15 +344,19 @@ class RPiCamPublisher(Node):
         # Stop GStreamer process
         if self.gst_process:
             try:
-                self.gst_process.terminate()
-                self.gst_process.wait(timeout=2)
+                # Send SIGTERM to process group
+                os.killpg(os.getpgid(self.gst_process.pid), signal.SIGTERM)
+                self.gst_process.wait(timeout=3)
             except:
-                if self.gst_process.poll() is None:
-                    self.gst_process.kill()
+                try:
+                    # Force kill if needed
+                    os.killpg(os.getpgid(self.gst_process.pid), signal.SIGKILL)
+                except:
+                    pass
         
         # Wait for capture thread to finish
         if self.capture_thread:
-            self.capture_thread.join(timeout=2.0)
+            self.capture_thread.join(timeout=3.0)
         
         super().destroy_node()
 

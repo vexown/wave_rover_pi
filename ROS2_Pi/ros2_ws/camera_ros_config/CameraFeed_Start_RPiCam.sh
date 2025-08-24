@@ -63,6 +63,7 @@ SYSTEM_PACKAGES=(
     "gstreamer1.0-tools"        # GStreamer command line tools
     "gstreamer1.0-plugins-base" # Basic GStreamer plugins
     "gstreamer1.0-plugins-good" # Good quality GStreamer plugins
+    "gstreamer1.0-plugins-bad"  # Additional plugins (may help with stability)
     "gstreamer1.0-libcamera"    # GStreamer libcamera plugin
     "libcamera-tools"           # libcamera utilities (cam, etc.)
     "libcamera-ipa"             # IPA libraries for camera sensors (CRITICAL!)
@@ -149,10 +150,26 @@ else
     echo "⚠ No video devices found in /dev/"
 fi
 
+# Reset camera hardware to clear any stuck states
+echo "Resetting camera hardware..."
+if [ -d "/sys/class/gpio/gpio5" ]; then
+    echo "Toggling camera reset GPIO..."
+    echo 0 | sudo tee /sys/class/gpio/gpio5/value > /dev/null 2>&1
+    sleep 0.5
+    echo 1 | sudo tee /sys/class/gpio/gpio5/value > /dev/null 2>&1
+    sleep 1
+fi
+
+# Kill any existing libcamera processes that might be stuck
+echo "Cleaning up any stuck camera processes..."
+sudo pkill -f "libcamerasrc" 2>/dev/null || true
+sudo pkill -f "gst-launch" 2>/dev/null || true
+sleep 2
+
 # Test camera detection with libcamera
 echo "Testing camera detection..."
-if timeout 5s cam --list 2>/dev/null | grep -q "Available cameras" && 
-   ! timeout 5s cam --list 2>&1 | grep -q "ERROR.*Failed to register camera"; then
+if timeout 10s cam --list 2>/dev/null | grep -q "Available cameras" && 
+   ! timeout 10s cam --list 2>&1 | grep -q "ERROR.*Failed to register camera"; then
     echo "✓ Camera detected by libcamera"
 else
     echo "⚠ Camera not detected or has errors"
@@ -161,6 +178,7 @@ else
     echo "  2. Check if camera is enabled in /boot/firmware/config.txt"
     echo "  3. Reboot after installing libcamera-ipa"
     echo "  4. Try: sudo modprobe bcm2835-v4l2"
+    echo "  5. Check dmesg for camera errors: dmesg | grep -i camera"
 fi
 
 echo
@@ -175,6 +193,11 @@ fi
 echo "All checks passed! Starting RPi Camera Publisher..."
 echo "Press Ctrl+C to stop the camera feed"
 echo
+
+# Set environment variables for better libcamera stability
+export LIBCAMERA_LOG_LEVELS="*:ERROR"  # Reduce log noise
+export GST_DEBUG_NO_COLOR=1             # Disable color in GStreamer debug
+export GST_DEBUG=2                      # Set moderate debug level
 
 # Start the camera publisher
 exec python3 "$SCRIPT_DIR/rpicam_publisher.py" \
