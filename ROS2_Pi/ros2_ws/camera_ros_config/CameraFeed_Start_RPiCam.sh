@@ -3,10 +3,13 @@
 # This avoids the libcamera IPA proxy issues with camera_ros and rpicam-vid symbol issues
 # Checks for required dependencies and provides installation instructions if missing
 
+######################################################################
+# --- Script Initialization ---
+######################################################################
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
 ######################################################################
-# --- Configuring Camera Parameters ---
+# --- Camera Configuration Parameters ---
 ######################################################################
 TARGET_FPS=15 # Reduced FPS for stability - high FPS causes JPEG corruption
 WIDTH=800
@@ -16,18 +19,31 @@ PUBLISH_COMPRESSED=true  # Set to true to publish compressed images
 JPEG_QUALITY=75  # Reduced quality for less CPU load (1-100, higher = better quality, larger size)
 ######################################################################
 
+######################################################################
+# --- Startup Information Display ---
+######################################################################
 echo "=== RPi Camera Publisher Setup & Start ==="
 echo "Camera settings: ${WIDTH}x${HEIGHT} @ ${TARGET_FPS}fps, format: ${FORMAT}"
 echo "Compressed images: ${PUBLISH_COMPRESSED}, JPEG quality: ${JPEG_QUALITY}%"
 echo
 
+######################################################################
+# --- Helper Functions ---
+######################################################################
 # Function to check if a package is installed
 check_package_installed() {
     dpkg -l | grep -q "^ii  $1 " 2>/dev/null
 }
 
+######################################################################
+# --- Script Preparation ---
+######################################################################
 # Make sure the Python script is executable
 chmod +x "$SCRIPT_DIR/rpicam_publisher.py"
+
+######################################################################
+# --- System Dependencies Check ---
+######################################################################
 
 echo "=== Checking System Dependencies ==="
 
@@ -74,9 +90,9 @@ else
     echo "✓ All required system packages are installed"
 fi
 
-echo
-
-# Check Python dependencies
+######################################################################
+# --- Python Dependencies Check ---
+######################################################################
 echo "=== Checking Python Dependencies ==="
 PYTHON_MODULES=("cv2" "cv_bridge" "rclpy" "sensor_msgs")
 MISSING_PYTHON_MODULES=()
@@ -95,7 +111,9 @@ if [ ${#MISSING_PYTHON_MODULES[@]} -gt 0 ]; then
     echo "This may cause runtime errors. Install missing ROS2 packages if needed."
 fi
 
-echo
+######################################################################
+# --- Hardware Detection & Setup ---
+######################################################################
 echo "=== Hardware Detection ==="
 
 # Check camera hardware detection
@@ -136,7 +154,9 @@ else
     echo "  5. Check dmesg for camera errors: dmesg | grep -i camera"
 fi
 
-echo
+######################################################################
+# --- Camera Publisher Startup ---
+######################################################################
 echo "=== Starting Camera Publisher ==="
 
 echo "All checks passed! Starting RPi Camera Publisher..."
