@@ -1,7 +1,7 @@
 #!/bin/bash
 # This script starts the custom RPi camera node using GStreamer with libcamera
 # This avoids the libcamera IPA proxy issues with camera_ros and rpicam-vid symbol issues
-# Auto-installs all required dependencies for reliable camera streaming
+# Checks for required dependencies and provides installation instructions if missing
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 
@@ -24,33 +24,6 @@ echo
 # Function to check if a package is installed
 check_package_installed() {
     dpkg -l | grep -q "^ii  $1 " 2>/dev/null
-}
-
-# Function to install packages with error checking
-install_packages() {
-    local packages=("$@")
-    local missing_packages=()
-    
-    # Check which packages are missing
-    for package in "${packages[@]}"; do
-        if ! check_package_installed "$package"; then
-            missing_packages+=("$package")
-        fi
-    done
-    
-    # Install missing packages
-    if [ ${#missing_packages[@]} -gt 0 ]; then
-        echo "Installing missing packages: ${missing_packages[*]}"
-        if sudo apt update && sudo apt install -y "${missing_packages[@]}"; then
-            echo "✓ Successfully installed: ${missing_packages[*]}"
-        else
-            echo "✗ Failed to install packages: ${missing_packages[*]}"
-            echo "Please install manually: sudo apt install ${missing_packages[*]}"
-            exit 1
-        fi
-    else
-        echo "✓ All required packages already installed"
-    fi
 }
 
 # Make sure the Python script is executable
@@ -83,8 +56,23 @@ else
     echo "⚠ ROS2 not detected - skipping ROS2 packages"
 fi
 
-# Install all required packages
-install_packages "${SYSTEM_PACKAGES[@]}"
+# Check for missing system packages
+MISSING_PACKAGES=()
+for package in "${SYSTEM_PACKAGES[@]}"; do
+    if ! check_package_installed "$package"; then
+        MISSING_PACKAGES+=("$package")
+    fi
+done
+
+if [ ${#MISSING_PACKAGES[@]} -gt 0 ]; then
+    echo "✗ Missing required packages: ${MISSING_PACKAGES[*]}"
+    echo "Please install them manually with:"
+    echo "  sudo apt update && sudo apt install ${MISSING_PACKAGES[*]}"
+    echo "Then run this script again."
+    exit 1
+else
+    echo "✓ All required system packages are installed"
+fi
 
 echo
 echo "=== Verifying Critical Components ==="
