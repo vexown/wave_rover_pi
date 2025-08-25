@@ -48,55 +48,6 @@ echo "Compressed images: ${PUBLISH_COMPRESSED}, JPEG quality: ${JPEG_QUALITY}%"
 echo
 
 ######################################################################
-# --- Script Preparation ---
-######################################################################
-# Make sure the Python script is executable
-chmod +x "$SCRIPT_DIR/rpicam_publisher.py"
-
-######################################################################
-# --- Hardware Detection & Setup ---
-######################################################################
-echo "=== Hardware Detection ==="
-
-# Check camera hardware detection
-if [ -e "/dev/video0" ]; then
-    echo "✓ Video devices found: $(ls /dev/video* | wc -l) devices"
-else
-    echo "⚠ No video devices found in /dev/"
-fi
-
-# Reset camera hardware to clear any stuck states
-echo "Resetting camera hardware..."
-if [ -d "/sys/class/gpio/gpio5" ]; then
-    echo "Toggling camera reset GPIO..."
-    echo 0 | sudo tee /sys/class/gpio/gpio5/value > /dev/null 2>&1
-    sleep 0.5
-    echo 1 | sudo tee /sys/class/gpio/gpio5/value > /dev/null 2>&1
-    sleep 1
-fi
-
-# Kill any existing libcamera processes that might be stuck
-echo "Cleaning up any stuck camera processes..."
-sudo pkill -f "libcamerasrc" 2>/dev/null || true
-sudo pkill -f "gst-launch" 2>/dev/null || true
-sleep 2
-
-# Test camera detection with libcamera
-echo "Testing camera detection..."
-if timeout 10s cam --list 2>/dev/null | grep -q "Available cameras" && 
-   ! timeout 10s cam --list 2>&1 | grep -q "ERROR.*Failed to register camera"; then
-    echo "✓ Camera detected by libcamera"
-else
-    echo "⚠ Camera not detected or has errors"
-    echo "Common solutions:"
-    echo "  1. Ensure camera cable is properly connected"
-    echo "  2. Check if camera is enabled in /boot/firmware/config.txt"
-    echo "  3. Reboot after installing libcamera-ipa"
-    echo "  4. Try: sudo modprobe bcm2835-v4l2"
-    echo "  5. Check dmesg for camera errors: dmesg | grep -i camera"
-fi
-
-######################################################################
 # --- Camera Publisher Startup ---
 ######################################################################
 echo "=== Starting Camera Publisher ==="
