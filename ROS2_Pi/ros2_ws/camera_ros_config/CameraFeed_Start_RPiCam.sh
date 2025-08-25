@@ -75,39 +75,6 @@ else
 fi
 
 echo
-echo "=== Verifying Critical Components ==="
-
-# Check GStreamer
-if command -v gst-launch-1.0 &> /dev/null; then
-    echo "✓ GStreamer found: $(gst-launch-1.0 --version | head -n1)"
-else
-    echo "✗ gst-launch-1.0 not found"
-    exit 1
-fi
-
-# Check libcamera GStreamer plugin
-if gst-inspect-1.0 libcamerasrc &> /dev/null; then
-    echo "✓ libcamerasrc plugin available"
-else
-    echo "✗ libcamerasrc plugin not found"
-    echo "Try: sudo apt install gstreamer1.0-libcamera"
-    exit 1
-fi
-
-# Check libcamera tools
-if command -v cam &> /dev/null; then
-    echo "✓ libcamera tools found"
-else
-    echo "⚠ libcamera tools not found (optional)"
-fi
-
-# Check if IPA libraries are available
-if [ -d "/usr/lib/*/libcamera/" ] && [ -n "$(find /usr/lib -name "*ipa*.so" 2>/dev/null)" ]; then
-    echo "✓ IPA libraries found"
-else
-    echo "⚠ IPA libraries not found - camera may not work properly"
-    echo "Install with: sudo apt install libcamera-ipa"
-fi
 
 # Check Python dependencies
 echo "=== Checking Python Dependencies ==="
@@ -171,12 +138,6 @@ fi
 
 echo
 echo "=== Starting Camera Publisher ==="
-
-# Final check before starting
-if ! command -v gst-launch-1.0 &> /dev/null || ! gst-inspect-1.0 libcamerasrc &> /dev/null; then
-    echo "✗ Critical dependencies missing - cannot start camera"
-    exit 1
-fi
 
 echo "All checks passed! Starting RPi Camera Publisher..."
 echo "Press Ctrl+C to stop the camera feed"
