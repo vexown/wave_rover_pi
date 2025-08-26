@@ -51,9 +51,6 @@ echo
 # --- Camera Publisher Startup ---
 ######################################################################
 echo "=== Starting Camera Publisher ==="
-
-echo "All checks passed! Starting RPi Camera Publisher..."
-echo "Press Ctrl+C to stop the camera feed"
 echo
 
 # Start the camera publisher
