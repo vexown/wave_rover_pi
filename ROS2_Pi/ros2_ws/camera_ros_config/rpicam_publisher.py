@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo, CompressedImage
-from cv_bridge import CvBridge
-import cv2
-import numpy as np
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import CameraInfo, CompressedImage
 import subprocess
 import os
 import time
@@ -17,50 +15,49 @@ shutdown_requested = False
 class RPiCamPublisher(Node):
     def __init__(self):
         super().__init__('rpicam_publisher')
-        
-        # Parameters
+
+        # Parameters (keep legacy ones for compatibility, even if unused now)
         self.declare_parameter('width', 800)
         self.declare_parameter('height', 600)
         self.declare_parameter('fps', 10)
-        self.declare_parameter('format', 'rgb')
-        self.declare_parameter('publish_compressed', True)
+        self.declare_parameter('format', 'rgb')              # unused (compressed only)
+        self.declare_parameter('publish_compressed', True)   # must remain True; raw disabled
         self.declare_parameter('jpeg_quality', 80)
-        
-        self.width = self.get_parameter('width').value
-        self.height = self.get_parameter('height').value
-        self.fps = self.get_parameter('fps').value
-        self.format = self.get_parameter('format').value
-        self.publish_compressed = self.get_parameter('publish_compressed').value
-        self.jpeg_quality = self.get_parameter('jpeg_quality').value
-        
-        # Publishers
-        self.image_pub = self.create_publisher(Image, '/camera/image_raw', 10)
-        self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', 10)
-        
-        # Compressed image publisher (optional)
-        if self.publish_compressed:
-            self.compressed_pub = self.create_publisher(CompressedImage, '/camera/image_raw/compressed', 10)
-        
-        # CV Bridge for image conversion
-        self.bridge = CvBridge()
-        
+
+        self.width = int(self.get_parameter('width').value)
+        self.height = int(self.get_parameter('height').value)
+        self.fps = max(1, int(self.get_parameter('fps').value))  # clamp
+        self.jpeg_quality = int(min(100, max(1, self.get_parameter('jpeg_quality').value)))
+
+        # QoS: depth=1 to drop old frames instead of queueing
+        sensor_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
+
+        # Publishers (compressed only + camera info)
+        self.compressed_pub = self.create_publisher(CompressedImage, '/camera/image_raw/compressed', sensor_qos)
+        self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', sensor_qos)
+
         # Camera info message
         self.camera_info_msg = self.create_camera_info()
-        
+
         # Initialize camera streaming
         self.running = True
         self.gst_process = None
         self.capture_thread = None
         self.frame_count = 0
         self.last_log_time = time.time()
-        self.debug_count = 0
-        
+        self.last_frame_time = time.time()
+        self.watchdog_interval = max(3.0, 2.5 / self.fps)
+        self.max_jpeg_size = 200_000
+
         # Start camera streaming
         self.start_camera()
-        
+
         self.get_logger().info(f'RPiCam Publisher started - {self.width}x{self.height}@{self.fps}fps')
-        if self.publish_compressed:
-            self.get_logger().info(f'Publishing compressed images at {self.jpeg_quality}% quality')
+        self.get_logger().info(f'Publishing JPEG compressed images only (quality={self.jpeg_quality})')
     
     def create_camera_info(self):
         """Create a basic camera info message"""
@@ -75,21 +72,7 @@ class RPiCamPublisher(Node):
         camera_info.p = [self.width, 0.0, self.width/2, 0.0, 0.0, self.height, self.height/2, 0.0, 0.0, 0.0, 1.0, 0.0]
         return camera_info
     
-    def create_compressed_image(self, cv_image, timestamp):
-        """Create compressed image message"""
-        compressed_msg = CompressedImage()
-        compressed_msg.header.stamp = timestamp
-        compressed_msg.header.frame_id = "camera_link"
-        compressed_msg.format = "jpeg"
-        
-        # Encode image as JPEG
-        encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality]
-        success, encoded_image = cv2.imencode('.jpg', cv_image, encode_params)
-        
-        if success:
-            compressed_msg.data = encoded_image.tobytes()
-        
-        return compressed_msg
+    # (Raw image path removed to reduce CPU; only compressed is published.)
     
     def start_camera(self):
         """Start GStreamer libcamera pipeline for continuous streaming"""
@@ -114,7 +97,7 @@ class RPiCamPublisher(Node):
             self.gst_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # avoid blocking if not drained
                 bufsize=0,
                 preexec_fn=os.setsid
             )
@@ -122,8 +105,7 @@ class RPiCamPublisher(Node):
             # Check if process started successfully
             time.sleep(2.0)
             if self.gst_process.poll() is not None:
-                _, stderr = self.gst_process.communicate()
-                self.get_logger().error(f"GStreamer failed to start: {stderr.decode()}")
+                self.get_logger().error("GStreamer failed to start (exited early)")
                 return
             
             # Start capture thread
@@ -184,7 +166,7 @@ class RPiCamPublisher(Node):
     
     def capture_loop(self):
         """Main capture loop - reads MJPEG stream from GStreamer"""
-        buffer = b''
+        buffer = bytearray()
         
         self.get_logger().info("Starting GStreamer capture loop...")
         
@@ -202,7 +184,16 @@ class RPiCamPublisher(Node):
                     time.sleep(0.1)
                     continue
                 
-                buffer += chunk
+                buffer.extend(chunk)
+
+                # Guard against pathological growth (corruption); keep last sync marker region only
+                if len(buffer) > self.max_jpeg_size * 3:
+                    self.get_logger().warning('Buffer oversized, pruning to last potential frame start')
+                    last_start = buffer.rfind(b'\xff\xd8')
+                    if last_start != -1:
+                        buffer = buffer[last_start:]
+                    else:
+                        buffer.clear()
                 
                 # Look for JPEG frame boundaries (0xFFD8 = start, 0xFFD9 = end)
                 while True:
@@ -215,12 +206,18 @@ class RPiCamPublisher(Node):
                         break
                     
                     # Extract complete JPEG frame
-                    jpeg_data = buffer[start:end+2]
-                    buffer = buffer[end+2:]
+                    jpeg_data = bytes(buffer[start:end+2])  # copy out
+                    del buffer[:end+2]
                     
                     # Skip obviously corrupt frames
-                    if len(jpeg_data) > 1000 and len(jpeg_data) < 100000:
+                    if 1000 < len(jpeg_data) < self.max_jpeg_size:
                         self.process_frame(jpeg_data)
+
+                # Watchdog: restart if no frame recently
+                if time.time() - self.last_frame_time > self.watchdog_interval:
+                    self.get_logger().error('Watchdog: no frames received, restarting pipeline')
+                    self.restart_camera()
+                    return  # exit loop; new thread will be started by restart
                     
             except Exception as e:
                 if self.running:
@@ -230,61 +227,31 @@ class RPiCamPublisher(Node):
         self.get_logger().info("Capture loop ended")
     
     def process_frame(self, jpeg_data):
-        """Process a single JPEG frame"""
+        """Publish a JPEG frame as CompressedImage (no decode)."""
         try:
-            self.get_logger().debug(f"Processing JPEG frame of {len(jpeg_data)} bytes")
-            
-            # Decode JPEG to OpenCV format
-            nparr = np.frombuffer(jpeg_data, np.uint8)
-            cv_image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if cv_image is None:
-                self.get_logger().warning("Failed to decode JPEG frame")
-                return
-            
-            self.get_logger().debug(f"Decoded image: {cv_image.shape}")
-            
-            # Create timestamp
-            now = self.get_clock().now()
-            
-            # Convert BGR to RGB if needed
-            if self.format == 'rgb':
-                display_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-                encoding = 'rgb8'
-            else:
-                display_image = cv_image
-                encoding = 'bgr8'
-            
-            # Create and publish raw image
-            img_msg = self.bridge.cv2_to_imgmsg(display_image, encoding=encoding)
-            img_msg.header.stamp = now.to_msg()
-            img_msg.header.frame_id = "camera_link"
-            self.image_pub.publish(img_msg)
-            
-            # Publish camera info
-            self.camera_info_msg.header.stamp = now.to_msg()
+            now = self.get_clock().now().to_msg()
+
+            # Publish camera info (timestamped)
+            self.camera_info_msg.header.stamp = now
             self.camera_info_pub.publish(self.camera_info_msg)
-            
-            # Publish compressed image if enabled (reuse the JPEG data)
-            if self.publish_compressed:
-                compressed_msg = CompressedImage()
-                compressed_msg.header.stamp = now.to_msg()
-                compressed_msg.header.frame_id = "camera_link"
-                compressed_msg.format = "jpeg"
-                compressed_msg.data = jpeg_data
-                self.compressed_pub.publish(compressed_msg)
-            
-            # Log performance occasionally
+
+            msg = CompressedImage()
+            msg.header.stamp = now
+            msg.header.frame_id = "camera_link"
+            msg.format = "jpeg"
+            msg.data = jpeg_data
+            self.compressed_pub.publish(msg)
+
             self.frame_count += 1
-            current_time = time.time()
-            if current_time - self.last_log_time > 5.0:  # Every 5 seconds
+            self.last_frame_time = time.time()
+            current_time = self.last_frame_time
+            if current_time - self.last_log_time > 5.0:
                 actual_fps = self.frame_count / (current_time - self.last_log_time)
-                self.get_logger().info(f"Publishing at {actual_fps:.1f} fps (target: {self.fps} fps)")
+                self.get_logger().info(f"Compressed stream: {actual_fps:.1f} fps (target {self.fps})")
                 self.frame_count = 0
                 self.last_log_time = current_time
-                
         except Exception as e:
-            self.get_logger().error(f"Frame processing error: {str(e)}")
+            self.get_logger().error(f"Frame publish error: {e}")
     
     def destroy_node(self):
         """Clean up resources"""
