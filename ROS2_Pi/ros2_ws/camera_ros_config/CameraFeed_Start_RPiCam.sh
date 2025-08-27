@@ -31,7 +31,7 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 ######################################################################
 # --- Camera Configuration Parameters ---
 ######################################################################
-TARGET_FPS=15 # Reduced FPS for stability - high FPS causes JPEG corruption
+TARGET_FPS=30
 WIDTH=800
 HEIGHT=600
 FORMAT="rgb"  # rgb or bgr
