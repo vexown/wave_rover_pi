@@ -108,27 +108,29 @@ class RPiCamPublisher(Node):
             # Start the process
             self.gst_process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
+                stdout=subprocess.PIPE,            # binary JPEG stream
                 stderr=subprocess.PIPE if self.enable_stderr_logging else subprocess.DEVNULL,
                 bufsize=0,
-                preexec_fn=os.setsid,
-                text=True
+                preexec_fn=os.setsid
             )
             self.pipeline_start_time = time.monotonic()
 
             # Start stderr reader thread (non-blocking) if enabled
             if self.enable_stderr_logging and self.gst_process.stderr:
                 def _drain_stderr():
-                    for line in self.gst_process.stderr:
-                        line = line.strip()
+                    for raw_line in iter(self.gst_process.stderr.readline, b''):
+                        try:
+                            line = raw_line.decode('utf-8', 'replace').strip()
+                        except Exception:
+                            continue
                         if not line:
                             continue
-                        # Log negotiation / error lines at warn/error levels heuristically
-                        if 'ERROR' in line or 'error' in line.lower():
+                        lower = line.lower()
+                        if 'error' in lower:
                             self.get_logger().error(f"[gst] {line}")
-                        elif 'WARN' in line or 'warning' in line.lower():
+                        elif 'warn' in lower:
                             self.get_logger().warning(f"[gst] {line}")
-                        elif 'libcamera' in line.lower():
+                        elif 'libcamera' in lower:
                             self.get_logger().info(f"[gst] {line}")
                 self._stderr_thread = Thread(target=_drain_stderr, daemon=True)
                 self._stderr_thread.start()
@@ -261,9 +263,9 @@ class RPiCamPublisher(Node):
                     
             except Exception as e:
                 if self.running:
-                    self.get_logger().error(f"Capture loop error: {str(e)}")
-                break
-        
+                    self.get_logger().error(f"Capture loop error: {e}; restarting pipeline")
+                    self.restart_camera()
+                return
         self.get_logger().info("Capture loop ended")
     
     def process_frame(self, jpeg_data):
