@@ -15,14 +15,18 @@ shutdown_requested = False
 class RPiCamPublisher(Node):
     def __init__(self):
         super().__init__('rpicam_publisher')
-
         # Parameters (keep legacy ones for compatibility, even if unused now)
-        self.declare_parameter('width', 800)
-        self.declare_parameter('height', 600)
-        self.declare_parameter('fps', 10)
-        self.declare_parameter('format', 'rgb')              # unused (compressed only)
-        self.declare_parameter('publish_compressed', True)   # must remain True; raw disabled
-        self.declare_parameter('jpeg_quality', 80)
+        self.declare_parameters('', [
+            ('width', 800),
+            ('height', 600),
+            ('fps', 10),
+            ('format', 'rgb'),              # unused (compressed only)
+            ('publish_compressed', True),    # must remain True; raw disabled
+            ('jpeg_quality', 80),
+            ('watchdog_grace_sec', 6.0),     # post-first-frame grace for gaps
+            ('startup_no_frame_timeout', 12.0),  # restart if no frame at all in this many sec
+            ('enable_stderr_logging', True)
+        ])
 
         self.width = int(self.get_parameter('width').value)
         self.height = int(self.get_parameter('height').value)
@@ -43,15 +47,22 @@ class RPiCamPublisher(Node):
         # Camera info message
         self.camera_info_msg = self.create_camera_info()
 
-        # Initialize camera streaming
+        # Initialize camera streaming state
         self.running = True
         self.gst_process = None
         self.capture_thread = None
         self.frame_count = 0
-        self.last_log_time = time.time()
-        self.last_frame_time = time.time()
+        self.frames_seen = 0
+        self.last_log_time = time.monotonic()
+        self.last_frame_time = time.monotonic()
         self.watchdog_interval = max(3.0, 2.5 / self.fps)
         self.max_jpeg_size = 200_000
+        self.watchdog_grace_sec = float(self.get_parameter('watchdog_grace_sec').value)
+        self.startup_no_frame_timeout = float(self.get_parameter('startup_no_frame_timeout').value)
+        self.enable_stderr_logging = bool(self.get_parameter('enable_stderr_logging').value)
+
+        self._stderr_thread = None
+        self.pipeline_start_time = None  # set after spawning gst
 
         # Start camera streaming
         self.start_camera()
@@ -87,6 +98,7 @@ class RPiCamPublisher(Node):
                 'gst-launch-1.0', '-q',
                 'libcamerasrc',
                 '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',
+                '!', 'videoconvert',
                 '!', 'jpegenc', f'quality={self.jpeg_quality}',
                 '!', 'fdsink', 'fd=1'
             ]
@@ -97,13 +109,32 @@ class RPiCamPublisher(Node):
             self.gst_process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,  # avoid blocking if not drained
+                stderr=subprocess.PIPE if self.enable_stderr_logging else subprocess.DEVNULL,
                 bufsize=0,
-                preexec_fn=os.setsid
+                preexec_fn=os.setsid,
+                text=True
             )
+            self.pipeline_start_time = time.monotonic()
+
+            # Start stderr reader thread (non-blocking) if enabled
+            if self.enable_stderr_logging and self.gst_process.stderr:
+                def _drain_stderr():
+                    for line in self.gst_process.stderr:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Log negotiation / error lines at warn/error levels heuristically
+                        if 'ERROR' in line or 'error' in line.lower():
+                            self.get_logger().error(f"[gst] {line}")
+                        elif 'WARN' in line or 'warning' in line.lower():
+                            self.get_logger().warning(f"[gst] {line}")
+                        elif 'libcamera' in line.lower():
+                            self.get_logger().info(f"[gst] {line}")
+                self._stderr_thread = Thread(target=_drain_stderr, daemon=True)
+                self._stderr_thread.start()
             
             # Check if process started successfully
-            time.sleep(2.0)
+            time.sleep(2.0)  # allow pipeline negotiation
             if self.gst_process.poll() is not None:
                 self.get_logger().error("GStreamer failed to start (exited early)")
                 return
@@ -181,7 +212,7 @@ class RPiCamPublisher(Node):
                 # Read data from GStreamer stdout
                 chunk = self.gst_process.stdout.read(4096)
                 if not chunk:
-                    time.sleep(0.1)
+                    time.sleep(0.05)
                     continue
                 
                 buffer.extend(chunk)
@@ -214,10 +245,19 @@ class RPiCamPublisher(Node):
                         self.process_frame(jpeg_data)
 
                 # Watchdog: restart if no frame recently
-                if time.time() - self.last_frame_time > self.watchdog_interval:
-                    self.get_logger().error('Watchdog: no frames received, restarting pipeline')
-                    self.restart_camera()
-                    return  # exit loop; new thread will be started by restart
+                now_mono = time.monotonic()
+                # Startup: no frames ever seen
+                if self.frames_seen == 0:
+                    if self.pipeline_start_time and (now_mono - self.pipeline_start_time) > self.startup_no_frame_timeout:
+                        self.get_logger().error('Startup timeout: no frames received, restarting pipeline')
+                        self.restart_camera()
+                        return
+                else:
+                    # Post-first-frame watchdog
+                    if (now_mono - self.last_frame_time) > (self.watchdog_interval + self.watchdog_grace_sec):
+                        self.get_logger().error('Watchdog: frame gap exceeded, restarting pipeline')
+                        self.restart_camera()
+                        return
                     
             except Exception as e:
                 if self.running:
@@ -243,7 +283,8 @@ class RPiCamPublisher(Node):
             self.compressed_pub.publish(msg)
 
             self.frame_count += 1
-            self.last_frame_time = time.time()
+            self.frames_seen += 1
+            self.last_frame_time = time.monotonic()
             current_time = self.last_frame_time
             if current_time - self.last_log_time > 5.0:
                 actual_fps = self.frame_count / (current_time - self.last_log_time)
