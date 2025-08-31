@@ -34,8 +34,6 @@ SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 TARGET_FPS=30
 WIDTH=800
 HEIGHT=600
-FORMAT="rgb"  # rgb or bgr
-PUBLISH_COMPRESSED=true  # Set to true to publish compressed images
 JPEG_QUALITY=75  # Reduced quality for less CPU load (1-100, higher = better quality, larger size)
 ######################################################################
 
@@ -43,8 +41,8 @@ JPEG_QUALITY=75  # Reduced quality for less CPU load (1-100, higher = better qua
 # --- Startup Information Display ---
 ######################################################################
 echo "=== RPi Camera Publisher Setup & Start ==="
-echo "Camera settings: ${WIDTH}x${HEIGHT} @ ${TARGET_FPS}fps, format: ${FORMAT}"
-echo "Compressed images: ${PUBLISH_COMPRESSED}, JPEG quality: ${JPEG_QUALITY}%"
+echo "Camera settings: ${WIDTH}x${HEIGHT} @ ${TARGET_FPS}fps"
+echo "JPEG quality: ${JPEG_QUALITY}%"
 echo
 
 ######################################################################
@@ -59,6 +57,4 @@ exec python3 "$SCRIPT_DIR/rpicam_publisher.py" \
     -p width:=$WIDTH \
     -p height:=$HEIGHT \
     -p fps:=$TARGET_FPS \
-    -p format:="$FORMAT" \
-    -p publish_compressed:=$PUBLISH_COMPRESSED \
     -p jpeg_quality:=$JPEG_QUALITY

@@ -9,29 +9,36 @@ import time
 import signal
 from threading import Thread
 
-# Global shutdown flag
+# Global shutdown coordination flag - allows clean termination across threads
+# Set to True when SIGINT (Ctrl+C) or SIGTERM (kill command) received to signal all components to stop
+#       SIGINT = Signal Interrupt (signal 2) - triggered by Ctrl+C, allows graceful cleanup
+#       SIGTERM = Signal Terminate (signal 15) - triggered by kill command, also allows graceful shutdown
+# Without this flag, abrupt termination would leave camera processes running and ROS2 resources unclean
 shutdown_requested = False
 
 class RPiCamPublisher(Node):
+    # Constructor that sets up the ROS2 camera publisher node.
     def __init__(self):
-        super().__init__('rpicam_publisher')
-        # Parameters (keep legacy ones for compatibility, even if unused now)
+        super().__init__('rpicam_publisher')  # Create ROS2 node named 'rpicam_publisher'
+        
+        # ROS2 parameters - configurable values that can be set when launching the node
+        # These allow external configuration without code changes (via launch files, command line, etc.)
+        # The values below are default ones and are overriden by the values provided in the ros2 launch command
         self.declare_parameters('', [
-            ('width', 800),
-            ('height', 600),
-            ('fps', 10),
-            ('format', 'rgb'),              # unused (compressed only)
-            ('publish_compressed', True),    # must remain True; raw disabled
-            ('jpeg_quality', 80),
-            ('watchdog_grace_sec', 6.0),     # post-first-frame grace for gaps
-            ('startup_no_frame_timeout', 12.0),  # restart if no frame at all in this many sec
-            ('enable_stderr_logging', True)
+            ('width', 800),                      # Camera resolution width in pixels
+            ('height', 600),                     # Camera resolution height in pixels  
+            ('fps', 10),                         # Target frames per second
+            ('jpeg_quality', 80),                # JPEG compression quality (1-100, higher = better quality/larger files)
+            ('watchdog_grace_sec', 6.0),         # Extra time allowed between frames before restart
+            ('startup_no_frame_timeout', 12.0),  # Max seconds to wait for first frame before restart
+            ('enable_stderr_logging', True)      # Whether to log GStreamer error messages
         ])
 
+        # Extract and validate parameter values
         self.width = int(self.get_parameter('width').value)
         self.height = int(self.get_parameter('height').value)
-        self.fps = max(1, int(self.get_parameter('fps').value))  # clamp
-        self.jpeg_quality = int(min(100, max(1, self.get_parameter('jpeg_quality').value)))
+        self.fps = max(1, int(self.get_parameter('fps').value))  # Ensure FPS >= 1
+        self.jpeg_quality = int(min(100, max(1, self.get_parameter('jpeg_quality').value)))  # Clamp 1-100
 
         # QoS: depth=1 to drop old frames instead of queueing
         sensor_qos = QoSProfile(
