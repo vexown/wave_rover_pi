@@ -40,30 +40,38 @@ class RPiCamPublisher(Node):
         self.fps = max(1, int(self.get_parameter('fps').value))  # Ensure FPS >= 1
         self.jpeg_quality = int(min(100, max(1, self.get_parameter('jpeg_quality').value)))  # Clamp 1-100
 
-        # QoS: depth=1 to drop old frames instead of queueing
+        # QoS (Quality of Service) Profile - controls how ROS2 handles message delivery
+        # BEST_EFFORT: prioritize speed over reliability (OK to drop frames if network is slow)
+        # KEEP_LAST + depth=1: only keep the newest frame, discard older ones to prevent lag
+        # This prevents video buffering/delay by always showing the most recent camera frame
         sensor_qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=1
+            reliability=ReliabilityPolicy.BEST_EFFORT,  # Drop frames rather than guarantee delivery
+            history=HistoryPolicy.KEEP_LAST,            # Only keep the most recent messages
+            depth=1                                     # Buffer size of 1 = drop old frames immediately
         )
 
-        # Publishers (compressed only + camera info)
+        # Create ROS2 publishers - these send data to other nodes in the network
+        # CompressedImage: sends JPEG-compressed camera frames to '/camera/image_raw/compressed' topic
+        # CameraInfo: sends camera calibration data to '/camera/camera_info' topic (required by many vision nodes)
         self.compressed_pub = self.create_publisher(CompressedImage, '/camera/image_raw/compressed', sensor_qos)
         self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', sensor_qos)
 
-        # Camera info message
+        # Create camera calibration message - contains intrinsic camera parameters
+        # This tells subscribers the camera's focal length, distortion, etc. for 3D vision tasks
         self.camera_info_msg = self.create_camera_info()
 
-        # Initialize camera streaming state
-        self.running = True
-        self.gst_process = None
-        self.capture_thread = None
-        self.frame_count = 0
-        self.frames_seen = 0
-        self.last_log_time = time.monotonic()
-        self.last_frame_time = time.monotonic()
+        # Initialize camera streaming state variables
+        self.running = True                            # Main control flag - set to False to stop everything
+        self.gst_process = None                        # Handle to GStreamer subprocess (camera pipeline)
+        self.capture_thread = None                     # Background thread that reads camera frames
+        self.frame_count = 0                           # Counter for FPS calculation (resets every 5 seconds)
+        self.frames_seen = 0                           # Total frames received since startup (never resets)
+        self.last_log_time = time.monotonic()          # Timestamp of last FPS log message
+        self.last_frame_time = time.monotonic()        # Timestamp when last frame was received
+        
         self.watchdog_interval = max(3.0, 2.5 / self.fps)
         self.max_jpeg_size = 200_000
+        
         self.watchdog_grace_sec = float(self.get_parameter('watchdog_grace_sec').value)
         self.startup_no_frame_timeout = float(self.get_parameter('startup_no_frame_timeout').value)
         self.enable_stderr_logging = bool(self.get_parameter('enable_stderr_logging').value)
