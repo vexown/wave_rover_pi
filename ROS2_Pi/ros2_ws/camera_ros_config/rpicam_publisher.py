@@ -69,19 +69,23 @@ class RPiCamPublisher(Node):
         self.last_log_time = time.monotonic()          # Timestamp of last FPS log message
         self.last_frame_time = time.monotonic()        # Timestamp when last frame was received
 
+        # Watchdog timing - automatically restarts camera if it stops producing frames
         self.watchdog_interval = 3.0 # Watchdog interval (seconds)
         self.max_jpeg_size = 200_000 # Max expected JPEG size (200KB) for corruption detection
 
-        self.watchdog_grace_sec = float(self.get_parameter('watchdog_grace_sec').value)
-        self.startup_no_frame_timeout = float(self.get_parameter('startup_no_frame_timeout').value)
-        self.enable_stderr_logging = bool(self.get_parameter('enable_stderr_logging').value)
+        # Extract remaining parameters for camera monitoring and error handling
+        self.watchdog_grace_sec = float(self.get_parameter('watchdog_grace_sec').value)              # Extra time before restart
+        self.startup_no_frame_timeout = float(self.get_parameter('startup_no_frame_timeout').value)  # Startup timeout
+        self.enable_stderr_logging = bool(self.get_parameter('enable_stderr_logging').value)         # Log GStreamer errors
 
-        self._stderr_thread = None
-        self.pipeline_start_time = None  # set after spawning gst
+        # Initialize threading and process tracking variables
+        self._stderr_thread = None                     # Background thread for reading GStreamer error messages
+        self.pipeline_start_time = None                # When GStreamer pipeline was started (for startup timeout)
 
-        # Start camera streaming
+        # Start the camera streaming pipeline - this launches GStreamer and begins frame capture
         self.start_camera()
 
+        # Log successful initialization with current settings
         self.get_logger().info(f'RPiCam Publisher started - {self.width}x{self.height}@{self.fps}fps')
         self.get_logger().info(f'Publishing JPEG compressed images only (quality={self.jpeg_quality})')
     
