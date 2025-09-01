@@ -68,10 +68,10 @@ class RPiCamPublisher(Node):
         self.frames_seen = 0                           # Total frames received since startup (never resets)
         self.last_log_time = time.monotonic()          # Timestamp of last FPS log message
         self.last_frame_time = time.monotonic()        # Timestamp when last frame was received
-        
-        self.watchdog_interval = max(3.0, 2.5 / self.fps)
-        self.max_jpeg_size = 200_000
-        
+
+        self.watchdog_interval = 3.0 # Watchdog interval (seconds)
+        self.max_jpeg_size = 200_000 # Max expected JPEG size (200KB) for corruption detection
+
         self.watchdog_grace_sec = float(self.get_parameter('watchdog_grace_sec').value)
         self.startup_no_frame_timeout = float(self.get_parameter('startup_no_frame_timeout').value)
         self.enable_stderr_logging = bool(self.get_parameter('enable_stderr_logging').value)
