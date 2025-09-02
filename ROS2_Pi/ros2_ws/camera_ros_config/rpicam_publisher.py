@@ -107,34 +107,55 @@ class RPiCamPublisher(Node):
     def start_camera(self):
         """Start GStreamer libcamera pipeline for continuous streaming"""
         try:
-            # Check if gstreamer is available
             if not self.check_gstreamer():
                 self.get_logger().error("GStreamer or libcamera plugin not available")
                 return
-            
-            # Use a simpler, more stable pipeline
+
+            # Formulate the GStreamer pipeline command
+            # Example command: gst-launch-1.0 -q libcamerasrc ! video/x-raw,width=800,height=600,framerate=30/1 ! videoconvert ! jpegenc quality=75 ! fdsink fd=1
+            #
+            # GStreamer Pipeline Concept:
+            # GStreamer works like a factory assembly line - data flows through connected processing elements
+            # The '!' symbol connects elements together, creating a pipeline where each element transforms the data
+            # Format: source ! processor1 ! processor2 ! sink
+            # 
+            # Example pipeline breakdown:
+            # libcamerasrc              → Camera hardware (SOURCE: produces raw video frames)
+            #     ↓ (via !)
+            # video/x-raw,width=800...  → Format specification (tells next element what to expect)
+            #     ↓ (via !)  
+            # videoconvert              → Color format converter (FILTER: transforms video format)
+            #     ↓ (via !)
+            # jpegenc quality=75        → JPEG encoder (FILTER: compresses raw video to JPEG)
+            #     ↓ (via !)
+            # fdsink fd=1               → File descriptor sink (SINK: outputs data to stdout)
+            #
+            # Data flow: Raw Video → Format Conversion → JPEG Compression → Output Stream
+            # Think of '!' as pipes in Unix: camera | convert | compress | output
             cmd = [
-                'gst-launch-1.0', '-q',
-                'libcamerasrc',
-                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',
-                '!', 'videoconvert',
-                '!', 'jpegenc', f'quality={self.jpeg_quality}',
-                '!', 'fdsink', 'fd=1'
+                'gst-launch-1.0', '-q',           # Launch GStreamer pipeline quietly
+                'libcamerasrc',                   # RPi camera source (uses libcamera)
+                '!', f'video/x-raw,width={self.width},height={self.height},framerate={self.fps}/1',  # Set resolution/FPS
+                '!', 'videoconvert',              # Convert color formats if needed (to ensure it's compatible with downstream elements, like jpegenc)
+                '!', 'jpegenc', f'quality={self.jpeg_quality}',  # Encode to JPEG with specified quality
+                '!', 'fdsink', 'fd=1'             # Output to stdout (file descriptor 1) so it can later be read in the capture_loop by the python process
             ]
             
             self.get_logger().info(f"Starting GStreamer pipeline: {' '.join(cmd)}")
             
             # Start the process
             self.gst_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,            # binary JPEG stream
-                stderr=subprocess.PIPE if self.enable_stderr_logging else subprocess.DEVNULL,
-                bufsize=0,
-                preexec_fn=os.setsid
+                cmd,                               # GStreamer pipeline command
+                stdout=subprocess.PIPE,            # Capture JPEG stream
+                stderr=subprocess.PIPE if self.enable_stderr_logging else subprocess.DEVNULL,  # Log errors if enabled
+                bufsize=0,                         # No buffering (real-time)
+                preexec_fn=os.setsid               # Create new process group for clean termination
             )
             self.pipeline_start_time = time.monotonic()
 
+            # Error Monitoring Thread
             # Start stderr reader thread (non-blocking) if enabled
+            # This captures and logs GStreamer error messages without blocking the main thread
             if self.enable_stderr_logging and self.gst_process.stderr:
                 def _drain_stderr():
                     for raw_line in iter(self.gst_process.stderr.readline, b''):
@@ -159,10 +180,10 @@ class RPiCamPublisher(Node):
             if self.gst_process.poll() is not None:
                 self.get_logger().error("GStreamer failed to start (exited early)")
                 return
-            
-            # Start capture thread
+
+            # Start capture thread (implemented by the capture_loop method)
             self.capture_thread = Thread(target=self.capture_loop)
-            self.capture_thread.daemon = True
+            self.capture_thread.daemon = True # daemon thread is a background thread that runs without preventing the main program from exiting
             self.capture_thread.start()
             
             self.get_logger().info("Started GStreamer libcamera pipeline successfully")
