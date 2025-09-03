@@ -238,75 +238,92 @@ class RPiCamPublisher(Node):
             self.get_logger().error(f"Error restarting camera: {str(e)}")
     
     def capture_loop(self):
-        """Main capture loop - reads MJPEG stream from GStreamer"""
-        buffer = bytearray()
+        """Main capture loop - reads MJPEG stream from GStreamer and extracts individual JPEG frames"""
+        buffer = bytearray()  # Accumulating buffer for incoming binary data from GStreamer
         
         self.get_logger().info("Starting GStreamer capture loop...")
         
+        # Main processing loop - continues until shutdown is requested
         while self.running and rclpy.ok() and self.gst_process and not shutdown_requested:
             try:
-                # Check if process is still running
-                if self.gst_process.poll() is not None:
-                    _, stderr = self.gst_process.communicate()
+                # === PROCESS HEALTH CHECK ===
+                # Check if GStreamer subprocess is still alive
+                if self.gst_process.poll() is not None:  # poll() returns exit code if process died, None if still running
+                    _, stderr = self.gst_process.communicate()  # Get any error messages
                     self.get_logger().error(f"GStreamer process terminated: {stderr.decode()}")
                     break
                 
-                # Read data from GStreamer stdout
-                chunk = self.gst_process.stdout.read(4096)
-                if not chunk:
-                    time.sleep(0.05)
+                # === READ RAW DATA FROM GSTREAMER ===
+                # Read binary data chunks from GStreamer's stdout (where JPEG stream flows)
+                chunk = self.gst_process.stdout.read(4096)  # Read up to 4KB at a time (non-blocking)
+                if not chunk:  # No data available right now
+                    time.sleep(0.05)  # Brief pause to avoid busy-waiting (CPU spinning)
                     continue
                 
-                buffer.extend(chunk)
+                buffer.extend(chunk)  # Append new data to our accumulating buffer
 
-                # Guard against pathological growth (corruption); keep last sync marker region only
-                if len(buffer) > self.max_jpeg_size * 3:
+                # === BUFFER OVERFLOW PROTECTION ===
+                # If buffer grows too large (3x max JPEG size = 600KB), it's likely corrupted
+                # Keep only the most recent potential frame start to recover from corruption
+                if len(buffer) > self.max_jpeg_size * 3:  # 600KB threshold
                     self.get_logger().warning('Buffer oversized, pruning to last potential frame start')
-                    last_start = buffer.rfind(b'\xff\xd8')
+                    last_start = buffer.rfind(b'\xff\xd8')  # Find last JPEG start marker (backwards search)
                     if last_start != -1:
-                        buffer = buffer[last_start:]
+                        buffer = buffer[last_start:]  # Keep only data from last frame start
                     else:
-                        buffer.clear()
+                        buffer.clear()  # No valid frame start found, clear everything
                 
-                # Look for JPEG frame boundaries (0xFFD8 = start, 0xFFD9 = end)
-                while True:
-                    start = buffer.find(b'\xff\xd8')
-                    if start == -1:
-                        break
+                # === JPEG FRAME EXTRACTION ===
+                # JPEG files have specific byte markers: 0xFFD8 (start) and 0xFFD9 (end)
+                # We need to find complete frames (start + content + end) in the stream
+                while True:  # Process all complete frames in current buffer
+                    # Look for JPEG start marker (SOI = Start of Image)
+                    start = buffer.find(b'\xff\xd8')  # 0xFFD8 in binary
+                    if start == -1:  # No frame start found
+                        break  # Wait for more data
                     
-                    end = buffer.find(b'\xff\xd9', start)
-                    if end == -1:
-                        break
+                    # Look for JPEG end marker (EOI = End of Image) after the start
+                    end = buffer.find(b'\xff\xd9', start)  # 0xFFD9 in binary, search after start position
+                    if end == -1:  # Frame not complete yet
+                        break  # Wait for more data to complete the frame
                     
-                    # Extract complete JPEG frame
-                    jpeg_data = bytes(buffer[start:end+2])  # copy out
-                    del buffer[:end+2]
+                    # === COMPLETE FRAME FOUND ===
+                    # Extract the complete JPEG frame (including both markers)
+                    jpeg_data = bytes(buffer[start:end+2])  # +2 to include the end marker (2 bytes)
+                    del buffer[:end+2]  # Remove processed data from buffer (keep any remaining data)
                     
-                    # Skip obviously corrupt frames
-                    if 1000 < len(jpeg_data) < self.max_jpeg_size:
-                        self.process_frame(jpeg_data)
+                    # === BASIC CORRUPTION CHECK ===
+                    # Skip frames that are obviously corrupt (too small/large)
+                    if 1000 < len(jpeg_data) < self.max_jpeg_size:  # Between 1KB and 200KB
+                        self.process_frame(jpeg_data)  # Send valid frame to ROS2 publishing
 
-                # Watchdog: restart if no frame recently
-                now_mono = time.monotonic()
-                # Startup: no frames ever seen
-                if self.frames_seen == 0:
+                # === WATCHDOG SYSTEM ===
+                # Automatic restart if camera stops producing frames
+                now_mono = time.monotonic()  # Current timestamp (monotonic = doesn't go backwards)
+                
+                # STARTUP TIMEOUT: No frames received since pipeline started
+                if self.frames_seen == 0:  # Never received any frames
                     if self.pipeline_start_time and (now_mono - self.pipeline_start_time) > self.startup_no_frame_timeout:
                         self.get_logger().error('Startup timeout: no frames received, restarting pipeline')
-                        self.restart_camera()
+                        self.restart_camera()  # Pipeline failed to produce frames, restart it
                         return
                 else:
-                    # Post-first-frame watchdog
-                    if (now_mono - self.last_frame_time) > (self.watchdog_interval + self.watchdog_grace_sec):
+                    # RUNTIME WATCHDOG: Had frames before, but stopped getting them
+                    time_since_last_frame = now_mono - self.last_frame_time
+                    timeout_threshold = self.watchdog_interval + self.watchdog_grace_sec  # 3.0 + 6.0 = 9 seconds
+                    if time_since_last_frame > timeout_threshold:
                         self.get_logger().error('Watchdog: frame gap exceeded, restarting pipeline')
-                        self.restart_camera()
+                        self.restart_camera()  # Camera stopped working, restart it
                         return
-                    
+                        
             except Exception as e:
-                if self.running:
+                # Any unexpected error in the loop
+                if self.running:  # Only log if we're not shutting down
                     self.get_logger().error(f"Capture loop error: {e}; restarting pipeline")
-                    self.restart_camera()
+                    self.restart_camera()  # Try to recover by restarting
                 return
-        self.get_logger().info("Capture loop ended")
+        
+        self.get_logger().info("Capture loop ended")  # Normal shutdown
     
     def process_frame(self, jpeg_data):
         """Publish a JPEG frame as CompressedImage (no decode)."""
