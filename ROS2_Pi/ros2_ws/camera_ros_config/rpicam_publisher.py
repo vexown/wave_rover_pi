@@ -331,31 +331,63 @@ class RPiCamPublisher(Node):
         self.get_logger().info("Capture loop ended")  # Normal shutdown
     
     def process_frame(self, jpeg_data):
-        """Publish a JPEG frame as CompressedImage (no decode)."""
+        """Publish a JPEG frame as CompressedImage to ROS2 topics.
+        
+        This function takes validated JPEG binary data and publishes it to ROS2 subscribers.
+        It also publishes camera calibration info and tracks performance metrics.
+        
+        Args:
+            jpeg_data (bytes): Complete JPEG frame data (including SOI/EOI markers)
+        """
         try:
+            # === TIMESTAMP SYNCHRONIZATION ===
+            # Get current ROS2 timestamp for precise synchronization across the system
+            # This ensures all camera-related messages have consistent timing
             now = self.get_clock().now().to_msg()
-
-            # Publish camera info (timestamped)
+            
+            # === PUBLISH CAMERA CALIBRATION INFO ===
+            # CameraInfo contains intrinsic parameters (focal length, distortion, etc.)
+            # Required by vision algorithms for 3D reconstruction and image processing
+            # Must be published with same timestamp as image for proper synchronization
             self.camera_info_msg.header.stamp = now
             self.camera_info_pub.publish(self.camera_info_msg)
-
+            
+            # === CREATE COMPRESSED IMAGE MESSAGE ===
+            # CompressedImage is ROS2's standard message type for compressed camera frames
+            # Contains metadata (timestamp, frame_id) + binary JPEG data
             msg = CompressedImage()
-            msg.header.stamp = now
-            msg.header.frame_id = "camera_link"
-            msg.format = "jpeg"
-            msg.data = jpeg_data
+            msg.header.stamp = now                    # Same timestamp as camera info
+            msg.header.frame_id = "camera_link"       # Coordinate frame reference
+            msg.format = "jpeg"                       # Compression format (required by subscribers)
+            msg.data = jpeg_data                      # Raw JPEG binary data
+            
+            # === PUBLISH TO ROS2 TOPIC ===
+            # Sends compressed frame to '/camera/image_raw/compressed' topic
+            # Subscribers can decode this for computer vision tasks
             self.compressed_pub.publish(msg)
-
-            self.frame_count += 1
-            self.frames_seen += 1
-            self.last_frame_time = time.monotonic()
+            
+            # === UPDATE PERFORMANCE METRICS ===
+            # Track frame statistics for monitoring and debugging
+            self.frame_count += 1                     # Frames in current 5-second window
+            self.frames_seen += 1                     # Total frames since startup
+            self.last_frame_time = time.monotonic()   # Timestamp for watchdog system
+            
+            # === PERIODIC FPS LOGGING ===
+            # Calculate and log actual frame rate every 5 seconds
+            # Helps monitor if camera is achieving target FPS
             current_time = self.last_frame_time
-            if current_time - self.last_log_time > 5.0:
+            if current_time - self.last_log_time > 5.0:  # 5-second reporting interval
+                # FPS = frames processed / time elapsed
                 actual_fps = self.frame_count / (current_time - self.last_log_time)
                 self.get_logger().info(f"Compressed stream: {actual_fps:.1f} fps (target {self.fps})")
+                
+                # Reset counters for next measurement period
                 self.frame_count = 0
                 self.last_log_time = current_time
+                
         except Exception as e:
+            # Log publishing errors but don't crash the system
+            # Camera should continue operating even if one frame fails
             self.get_logger().error(f"Frame publish error: {e}")
     
     def destroy_node(self):
