@@ -255,7 +255,12 @@ class RPiCamPublisher(Node):
                 
                 # === READ RAW DATA FROM GSTREAMER ===
                 # Read binary data chunks from GStreamer's stdout (where JPEG stream flows)
-                chunk = self.gst_process.stdout.read(4096)  # Read up to 4KB at a time (non-blocking)
+                # 4096 bytes (4KB) chosen for optimal streaming performance:
+                # - Power of 2 (2^12) aligns with memory pages and CPU cache lines for efficiency
+                # - For JPEG frames (up to 200KB), 4KB chunks allow incremental processing without excessive memory use
+                # - Non-blocking read: processes available data immediately, enabling real-time frame extraction
+                # - Standard size for I/O operations in streaming applications (balances responsiveness vs overhead)
+                chunk = self.gst_process.stdout.read(4096)  
                 if not chunk:  # No data available right now
                     time.sleep(0.05)  # Brief pause to avoid busy-waiting (CPU spinning)
                     continue
