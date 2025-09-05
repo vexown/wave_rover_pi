@@ -424,52 +424,87 @@ class RPiCamPublisher(Node):
             print(f"Warning: Error in parent destroy_node: {e}")
 
 def main(args=None):
-    # Set up signal handlers for graceful shutdown
+    """Main entry point for the RPi Camera Publisher ROS2 node.
+    
+    This function initializes ROS2, creates the camera publisher node,
+    handles signals for graceful shutdown, and manages the node's lifecycle.
+    It ensures clean startup and shutdown to prevent resource leaks.
+    
+    Args:
+        args: Command-line arguments passed to ROS2 (typically from launch files)
+    """
+    # === SIGNAL HANDLING SETUP ===
+    # Set up handlers for SIGINT (Ctrl+C) and SIGTERM (kill command)
+    # These signals allow graceful shutdown instead of abrupt termination
+    # The global flag coordinates shutdown across main thread and camera threads
     import signal
     import sys
     
     def signal_handler(signum, frame):
+        """Signal handler for graceful shutdown requests"""
         print(f"\nReceived signal {signum}, shutting down gracefully...")
         global shutdown_requested
         shutdown_requested = True
     
+    # Initialize global shutdown coordination flag
     global shutdown_requested
     shutdown_requested = False
     
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    # Register signal handlers to catch termination requests
+    signal.signal(signal.SIGINT, signal_handler)   # Handle Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Handle kill command
     
-    publisher = None
-    rclpy_initialized = False
+    # Initialize variables for proper cleanup tracking
+    publisher = None         # Reference to the ROS2 node
+    rclpy_initialized = False  # Track if ROS2 was successfully initialized
     
     try:
+        # === ROS2 INITIALIZATION ===
+        # Initialize ROS2 context - required before creating nodes or publishers
+        # This sets up the ROS2 communication infrastructure
         rclpy.init(args=args)
         rclpy_initialized = True
         
+        # === NODE CREATION ===
+        # Create the camera publisher node - this starts the camera pipeline
+        # The constructor launches GStreamer and begins frame capture/publishing
         publisher = RPiCamPublisher()
         
-        # Custom spin loop with shutdown check
+        # === CUSTOM SPIN LOOP ===
+        # Use custom loop instead of rclpy.spin() for signal-responsive operation
+        # Checks shutdown flag every 0.1 seconds for responsive termination
+        # Allows camera threads to be stopped gracefully via global flag
         while rclpy.ok() and not shutdown_requested:
             try:
+                # Process one iteration of ROS2 callbacks (timers, services, etc.)
+                # Timeout ensures we don't block indefinitely
                 rclpy.spin_once(publisher, timeout_sec=0.1)
             except KeyboardInterrupt:
+                # Handle Ctrl+C during spin loop
                 break
         
     except KeyboardInterrupt:
+        # Handle keyboard interrupt at top level
         print("Keyboard interrupt received...")
     except Exception as e:
+        # Log any unexpected errors during execution
         print(f"Error in main: {e}")
     finally:
+        # === CLEANUP SECTION ===
+        # Ensure proper resource cleanup regardless of how we exit
         print("Cleaning up...")
+        
+        # Destroy the ROS2 node (stops camera pipeline and publishers)
         if publisher:
             try:
                 publisher.destroy_node()
             except Exception as e:
                 print(f"Error destroying node: {e}")
         
+        # Shutdown ROS2 context if it was initialized
         if rclpy_initialized:
             try:
+                # Only shutdown if ROS2 is still OK (prevents double-shutdown errors)
                 if rclpy.ok():
                     rclpy.shutdown()
             except Exception as e:
@@ -477,5 +512,7 @@ def main(args=None):
         
         print("Shutdown complete.")
 
+# Python idiom that ensures the code inside it only runs when the 
+# script is executed directly (not when imported as a module).
 if __name__ == '__main__':
     main()
