@@ -4,7 +4,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3, TransformStamped
+from tf2_ros import TransformBroadcaster
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
@@ -32,6 +33,9 @@ class SimpleVisualOdometry(Node):
         
         # Publish odometry
         self.odom_pub = self.create_publisher(Odometry, '/visual_odom', 10)
+        
+        # Transform broadcaster for RViz2
+        self.tf_broadcaster = TransformBroadcaster(self)
         
         # Visual odometry state
         self.prev_gray = None
@@ -142,7 +146,35 @@ class SimpleVisualOdometry(Node):
         odom.pose.covariance[35] = 0.1  # yaw
         
         self.odom_pub.publish(odom)
+        
+        # Broadcast transform for RViz2
+        self.broadcast_transform(timestamp)
+        
         self.get_logger().debug(f'Published odom: x={self.x:.2f}, y={self.y:.2f}, theta={self.theta:.2f}')
+    
+    def broadcast_transform(self, timestamp):
+        """Broadcast transform from odom to base_link"""
+        t = TransformStamped()
+        
+        t.header.stamp = timestamp
+        t.header.frame_id = 'odom'
+        t.child_frame_id = 'base_link'
+        
+        # Translation
+        t.transform.translation.x = self.x
+        t.transform.translation.y = self.y
+        t.transform.translation.z = 0.0
+        
+        # Rotation (quaternion from yaw)
+        qz = math.sin(self.theta / 2.0)
+        qw = math.cos(self.theta / 2.0)
+        t.transform.rotation.x = 0.0
+        t.transform.rotation.y = 0.0
+        t.transform.rotation.z = qz
+        t.transform.rotation.w = qw
+        
+        # Send the transformation
+        self.tf_broadcaster.sendTransform(t)
 
 def main(args=None):
     rclpy.init(args=args)
