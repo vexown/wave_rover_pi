@@ -38,6 +38,9 @@ class CompressedToRaw(Node):
             np_arr = np.frombuffer(msg.data, np.uint8)
             cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             
+            # Flip image 180 degrees (upside-down fix)
+            cv_image = cv2.flip(cv_image, -1)  # -1 flips both horizontally and vertically
+            
             # Convert to ROS Image message
             image_msg = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
             image_msg.header = msg.header
