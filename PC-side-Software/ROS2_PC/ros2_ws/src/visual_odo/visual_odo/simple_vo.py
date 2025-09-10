@@ -184,10 +184,14 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        pass
-    
-    node.destroy_node()
-    rclpy.shutdown()
+        node.get_logger().info('Shutting down visual odometry...')
+    finally:
+        # Clean shutdown
+        node.destroy_node()
+        try:
+            rclpy.shutdown()
+        except:
+            pass  # Already shutdown
 
 if __name__ == '__main__':
     main()
