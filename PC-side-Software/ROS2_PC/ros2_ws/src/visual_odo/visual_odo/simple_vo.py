@@ -4,7 +4,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Point, Pose, Quaternion, Twist, Vector3, TransformStamped
+from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
 from cv_bridge import CvBridge
 import cv2
@@ -54,6 +54,9 @@ class SimpleVisualOdometry(Node):
         # Camera parameters (simplified - should be calibrated)
         self.focal_length = 800  # Approximate focal length
         self.pp = (400, 300)     # Principal point (image center)
+        
+        # Create a timer to publish transform even when no motion detected
+        self.timer = self.create_timer(0.1, self.publish_static_transform)
         
         self.get_logger().info('Simple Visual Odometry started')
     
@@ -175,6 +178,11 @@ class SimpleVisualOdometry(Node):
         
         # Send the transformation
         self.tf_broadcaster.sendTransform(t)
+    
+    def publish_static_transform(self):
+        """Publish static transform even when no motion is detected"""
+        timestamp = self.get_clock().now().to_msg()
+        self.broadcast_transform(timestamp)
 
 def main(args=None):
     rclpy.init(args=args)
