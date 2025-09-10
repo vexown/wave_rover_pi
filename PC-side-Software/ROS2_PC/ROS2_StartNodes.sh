@@ -1,14 +1,8 @@
 #!/bin/bash
 # Launch/start all ROS 2 nodes in the workspace.
 
-# Get the directory where the script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-
 # Define the ros2 workspace directory
-ROS2_WS_DIR="${SCRIPT_DIR}/ros2_ws"
-
-# Navigate to the ROS2 workspace directory
-cd "${ROS2_WS_DIR}"
+ROS2_WS_DIR="$HOME/ros2_ws"
 
 # Source the ROS2 environment
 source /opt/ros/jazzy/setup.bash
