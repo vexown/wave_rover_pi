@@ -41,6 +41,8 @@ class CompressedToRaw(Node):
             # Convert to ROS Image message
             image_msg = self.bridge.cv2_to_imgmsg(cv_image, "bgr8")
             image_msg.header = msg.header
+            # Use base_link frame for now to avoid transform issues in RViz
+            image_msg.header.frame_id = "base_link"
             
             self.publisher.publish(image_msg)
             

@@ -178,6 +178,26 @@ class SimpleVisualOdometry(Node):
         
         # Send the transformation
         self.tf_broadcaster.sendTransform(t)
+        
+        # Also publish static transform from base_link to camera_link
+        camera_transform = TransformStamped()
+        camera_transform.header.stamp = timestamp
+        camera_transform.header.frame_id = 'base_link'
+        camera_transform.child_frame_id = 'camera_link'
+        
+        # Assuming camera is mounted forward-facing on the robot
+        # Adjust these values based on your actual camera mounting position
+        camera_transform.transform.translation.x = 0.1  # 10cm forward from base_link
+        camera_transform.transform.translation.y = 0.0  # Centered
+        camera_transform.transform.translation.z = 0.2  # 20cm above base_link
+        
+        # Camera pointing forward (no rotation relative to base_link)
+        camera_transform.transform.rotation.x = 0.0
+        camera_transform.transform.rotation.y = 0.0
+        camera_transform.transform.rotation.z = 0.0
+        camera_transform.transform.rotation.w = 1.0
+        
+        self.tf_broadcaster.sendTransform(camera_transform)
     
     def publish_static_transform(self):
         """Publish static transform even when no motion is detected"""
