@@ -116,15 +116,81 @@ class SimpleVisualOdometry(Node):
         #   * 800–2000+ → very robust but CPU heavy; useful for high-resolution images or offline processing where speed is less critical.
         self.orb = cv2.ORB_create(nfeatures=500)
 
-        # Brute-force matcher with Hamming norm for ORB (binary descriptors)
-        # crossCheck=True means matches are symmetric (faster but stricter)
+        # Brute-Force Matcher for comparing ORB descriptors between two frames.
+        #
+        # ORB creates "descriptors" for each keypoint — basically small fingerprints
+        # (a vector of numbers) that describe the visual pattern around that point.
+        # ORB uses binary descriptors, which means each descriptor is just a sequence
+        # of 0s and 1s (bits). This makes them very lightweight and fast to compare.
+        #
+        # To measure how similar two binary descriptors are, we use the Hamming distance:
+        # - The Hamming distance counts how many bits are different between two descriptors.
+        # - A distance of 0 means the descriptors are identical (perfect match),
+        #   while a larger number means they are less similar.
+        #
+        # crossCheck=True → This requires matches to be mutual (symmetric):
+        # - Point A in frame 1 must match point B in frame 2,
+        #   AND point B in frame 2 must match point A in frame 1.
+        # - This helps filter out bad matches automatically and gives more reliable matches,
+        #   but it is stricter and can result in fewer total matches.
+        #
+        # Summary of the process:
+        # 1. ORB detects keypoints in both the current frame and previous frame.
+        # 2. Each keypoint gets a binary descriptor.
+        # 3. BFMatcher compares every descriptor in the previous frame to every descriptor
+        #    in the current frame using Hamming distance (brute-force search).
+        # 4. The best matches (lowest distances) are returned.
+        #
+        # Note: Brute-force matching can be slow if there are many keypoints.
+        # If you increase ORB's nfeatures significantly, you may need to switch to
+        # a faster approximate matcher like FLANN for real-time performance.
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
-        # Simplified camera intrinsics (should be replaced by real calibration)
-        # focal length in pixels (approximate)
+        # Simplified camera intrinsics
+        #
+        # These are approximate values for your camera's internal parameters
+        # (a.k.a. intrinsics). They are used by OpenCV's functions like
+        # findEssentialMat() and recoverPose() to correctly interpret how
+        # points move between frames and estimate motion in 3D space.
+        #
+        # 1. FOCAL LENGTH (in pixels)
+        #    - This represents how "zoomed in" the camera is.
+        #    - It tells the math how much the image stretches as objects get closer or further.
+        #    - Typical values depend on your camera and image resolution.
+        #      For example, 800 is a rough guess for a 640x480 or 800x600 image.
+        #    - If this is wrong, the scale and motion direction from visual odometry
+        #      will be inaccurate or unstable.
         self.focal_length = 800
-        # principal point (cx, cy) - image center assumption
+
+        # 2. PRINCIPAL POINT (cx, cy)
+        #    - This is the pixel coordinate where the camera's optical axis
+        #      (center of the lens) hits the image sensor.
+        #    - For many cameras, it's approximately the image center.
+        #      Example: for an 800x600 image → pp = (400, 300).
+        #    - If slightly off, the math still works, but accuracy drops.
         self.pp = (400, 300)
+
+        # Why you need REAL calibration:
+        # --------------------------------
+        # These values are only rough guesses! Every real camera has tiny
+        # imperfections: the lens might bend the image (distortion), the true
+        # focal length might differ slightly, or the principal point may not
+        # be exactly at the center.
+        #
+        # Camera calibration is the process of taking pictures of a known
+        # pattern (like a checkerboard) and using OpenCV to measure:
+        #    - Focal length (fx, fy)
+        #    - Principal point (cx, cy)
+        #    - Lens distortion coefficients
+        #
+        # With real calibration:
+        #    - The recovered motion will be much more accurate and stable.
+        #    - It allows you to undistort images so straight lines stay straight,
+        #      which is critical for precise visual odometry.
+        #
+        # For now, these approximate values are "good enough" to get something
+        # working, but for reliable robotics, always replace them with real
+        # calibration data from OpenCV's camera_calibration tutorial.
 
         # Timer to periodically publish the static transform even if no motion
         # create_timer(period, callback) where period is in seconds
