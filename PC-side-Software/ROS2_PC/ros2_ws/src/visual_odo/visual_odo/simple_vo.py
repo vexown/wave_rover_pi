@@ -218,10 +218,33 @@ class SimpleVisualOdometry(Node):
         deployments.
         """
         try:
-            # Convert incoming ROS Image message to OpenCV BGR image
+            # Convert incoming ROS Image message to an OpenCV image.
+            #
+            # ROS2 cameras publish images as sensor_msgs/Image messages,
+            # which are just raw pixel data + some metadata like encoding type.
+            # cv_bridge is a helper that converts between ROS images and
+            # OpenCV images so we can use OpenCV functions.
+            #
+            # The "bgr8" argument tells CvBridge to output a standard BGR color image:
+            #   - 8-bit per channel (0-255 values),
+            #   - 3 channels: Blue, Green, Red (OpenCV's default color order).
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")  # May raise CvBridgeError
 
-            # Convert BGR image to grayscale for feature detection
+            # Convert the BGR color image to a single-channel grayscale image.
+            #
+            # Why grayscale for feature detection?
+            # - Algorithms like ORB, SIFT, and FAST care about intensity changes,
+            #   like edges and corners, not about color.
+            # - Working in grayscale is:
+            #     1. Faster → less data to process (1 channel instead of 3),
+            #     2. More reliable → color can vary with lighting but intensity patterns
+            #        (e.g., edges) stay consistent.
+            #
+            # In this step, OpenCV combines the B, G, and R channels using a
+            # standard weighted formula:
+            #   Gray = 0.299*R + 0.587*G + 0.114*B
+            #
+            # This results in a clean single-channel image ideal for feature detection.
             gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
 
             # Only attempt to compute motion if we have a previous frame
@@ -240,7 +263,42 @@ class SimpleVisualOdometry(Node):
                     # Sort matches by descriptor distance (lower is better)
                     matches = sorted(matches, key=lambda x: x.distance)
 
-                    # Keep only a limited number of good matches (top N)
+                    # Keep only a limited number of "good" matches (top N).
+                    #
+                    # ORB was initially configured to detect up to 500 features per frame.
+                    # However, when comparing two frames, not all those features will
+                    # have reliable matches — many might be weak, noisy, or incorrect.
+                    #
+                    # After the brute-force matching step, we sort matches by their
+                    # distance score (lower distance = better match). By taking only
+                    # the *top 50*, we focus on the most reliable correspondences.
+                    #
+                    # Why detect 500 features but only keep 50?
+                    # -------------------------------------------------------------
+                    # 1. **High initial pool = higher chance of strong matches:**
+                    #    - If you only detected 50 features at the start, you might
+                    #      miss good ones entirely if they are in areas with motion blur,
+                    #      poor texture, or occlusion.
+                    #    - Detecting 500 gives the algorithm a wide net to capture
+                    #      all potentially useful details.
+                    #
+                    # 2. **Filtering later improves robustness:**
+                    #    - The Essential Matrix calculation (cv2.findEssentialMat)
+                    #      is sensitive to outliers (bad matches).
+                    #    - By trimming to the best 50, we reduce the risk of noisy
+                    #      points introducing large errors.
+                    #
+                    # 3. **Performance balance:**
+                    #    - Using all 500 matches every frame would be slower and
+                    #      might overwhelm the math with redundant or noisy data.
+                    #    - 50 strong matches are often *enough* to estimate
+                    #      camera motion while keeping computation fast.
+                    #
+                    # Tuning:
+                    # - For slow camera movement and stable scenes, you can even use
+                    #   fewer matches (like 30).
+                    # - For fast movement or very dynamic environments, you might
+                    #   increase this limit to 100 or more to maintain accuracy.
                     good_matches = matches[:min(50, len(matches))]
 
                     # Continue only if we have a minimum number of good matches
