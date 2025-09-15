@@ -309,15 +309,60 @@ class SimpleVisualOdometry(Node):
                         # curr_pts: points in current frame corresponding to trainIdx
                         curr_pts = np.float32([kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
-                        # Estimate essential matrix using RANSAC to be robust to outliers
-                        E, mask = cv2.findEssentialMat(curr_pts, prev_pts,
-                                                     focal=self.focal_length,
-                                                     pp=self.pp,
-                                                     method=cv2.RANSAC,
-                                                     prob=0.999,
-                                                     threshold=1.0)
+                        # Estimate the Essential Matrix (E) between the current
+                        # and previous frames, using RANSAC to handle noisy data.
+                        #
+                        # Purpose:
+                        # --------
+                        # Given a set of matched feature points between two images,
+                        # this step figures out the relationship between those images
+                        # caused by the camera's movement.
+                        #
+                        # The Essential Matrix encodes the camera motion (rotation + 
+                        # translation direction) but NOT the actual distance moved.
+                        # 
+                        # Why we need this:
+                        # - To compute how the camera moved between frames,
+                        #   we need to separate true matches (good, consistent points)
+                        #   from outliers (bad matches caused by noise, moving objects,
+                        #   or incorrect feature matches).
+                        #
+                        # RANSAC (Random Sample Consensus):
+                        # ---------------------------------
+                        # - RANSAC is a robust estimation algorithm that tries to
+                        #   find a model (here, the Essential Matrix) while ignoring
+                        #   bad data.
+                        #
+                        #   It works like this:
+                        #   1. Randomly pick a small subset of point matches.
+                        #   2. Compute a candidate Essential Matrix (E) from those.
+                        #   3. Check how many of the other points agree with this model
+                        #      by seeing if they satisfy the epipolar geometry rule
+                        #      (basically: do they line up correctly given this motion?).
+                        #   4. Repeat many times and keep the solution that has the most
+                        #      "inliers" (agreeing points).
+                        #
+                        #   This way, a few bad matches won't ruin the result.
+                        #
+                        # Output:
+                        # -------
+                        # - E: The computed Essential Matrix (3x3)
+                        # - mask: A binary array indicating which matches were
+                        #   classified as inliers (1 = good, 0 = rejected).
+                        E, mask = cv2.findEssentialMat(curr_pts, prev_pts,      # The matched 2D point coordinates between current and previous frames.
+                                                       focal=self.focal_length, # The camera's approximate focal length in pixels.
+                                                       pp=self.pp,              # The principal point (cx, cy), usually the image center.
+                                                       method=cv2.RANSAC,       # Tell OpenCV to use RANSAC for outlier rejection.
+                                                       prob=0.999,              # The probability that the correct solution is found.
+                                                       threshold=1.0)           # Pixel error tolerance for deciding whether a point fits the model.
 
-                        # If a valid essential matrix was found
+                        # If a valid essential matrix was found, we use it to get the relative pose.
+                        #
+                        # The essential matrix is a compact 3×3 object that encodes how one camera view relates to another (or how one frame relates
+                        # to the next from the same moving camera). Practically, it answers this:
+                        # “Given a point seen in image A, where must its matching point lie in image B?”
+                        # It doesn’t give the exact matching pixel — it gives a line in image B where the match must sit. That line is called the epipolar line. 
+                        # The essential matrix encodes the camera rotation and the direction of translation between the two views.
                         if E is not None:
                             # Recover the relative pose (rotation R and translation t)
                             # between the two frames from the essential matrix.
