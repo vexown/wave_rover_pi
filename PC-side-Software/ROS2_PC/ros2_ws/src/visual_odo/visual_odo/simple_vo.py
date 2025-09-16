@@ -366,21 +366,53 @@ class SimpleVisualOdometry(Node):
                         if E is not None:
                             # Recover the relative pose (rotation R and translation t)
                             # between the two frames from the essential matrix.
-                            # The function also returns a mask of inliers.
+                            #
+                            # - R (3x3 matrix): how the camera rotated between the
+                            #   previous frame and the current frame.
+                            #
+                            # - t (3x1 vector): the *direction* the camera moved,
+                            #   but NOT the actual distance.
+                            #     Example: t might indicate "forward and slightly to the right",
+                            #     but it won't tell you if the camera moved 1 cm or 1 meter.
+                            #
+                            # Why no scale? With a single (monocular) camera, depth
+                            # cannot be directly measured — only the relative
+                            # direction of motion can be inferred from parallax.
+                            # To get real-world distance, you'd need extra info such as
+                            # stereo cameras, LiDAR, IMU data, or wheel odometry.
                             _, R, t, mask = cv2.recoverPose(E, curr_pts, prev_pts,
-                                                          focal=self.focal_length,
-                                                          pp=self.pp)
+                                                             focal=self.focal_length,
+                                                             pp=self.pp)
 
-                            # Simple scale estimation (placeholder)
-                            # For monocular VO the scale cannot be recovered without
-                            # additional info: stereo/depth/prior/loop closure, etc.
-                            scale = 0.1  # TODO: replace with proper scale estimation
+                            # 'scale' converts the unit-length translation vector (t) from recoverPose
+                            # into a real-world distance. Monocular visual odometry cannot determine
+                            # absolute scale by itself because a single camera only sees relative motion.
+                            # 
+                            # Example: if recoverPose returns t=[0,0,1] and the robot actually moved
+                            # 20 cm forward, then scale=0.20 (in meters). 
+                            # 
+                            # Without proper scale (e.g., stereo vision, depth sensor, wheel odometry),
+                            # this value is just a placeholder for visualization. Setting it wrong will
+                            # make the trajectory in RViz appear too large or too small.
+                            scale = 0.1  # TODO: Replace with actual scale estimation method
 
-                            # Translate the recovered translation vector into robot frame
-                            # dx is the lateral component (x in camera frame)
-                            dx = scale * t[0, 0]
-                            # dz is the forward component (z in camera frame)
-                            dz = scale * t[2, 0]
+                            # Even though 't' is just a direction, it's still a 3D vector
+                            # with proportions between its components (left/right, forward/back).
+                            # By multiplying 't' by a scalar value ('scale'), we stretch
+                            # this unit vector into a real-world displacement. 
+                            #   Example:
+                            #       t = [0, 0, 1] → "straight forward"
+                            #       scale = 0.20   → 20 cm per step
+                            #       real translation = scale * t = [0, 0, 0.20]
+                            #
+                            # Camera coordinate convention (OpenCV default):
+                            #   - X (t[0]) = left/right (lateral motion)
+                            #   - Z (t[2]) = forward/backward motion
+                            #
+                            # Applying scale to each component gives the actual distance
+                            # moved along that axis in the chosen unit (e.g., meters).
+                            dx = scale * t[0, 0]  # Sideways motion
+                            dz = scale * t[2, 0]  # Forward motion
 
                             # Estimate change in yaw from the rotation matrix.
                             # This is a simple approximation using atan2 on R components.
