@@ -414,21 +414,34 @@ class SimpleVisualOdometry(Node):
                             dx = scale * t[0, 0]  # Sideways motion
                             dz = scale * t[2, 0]  # Forward motion
 
-                            # Estimate change in yaw from the rotation matrix.
-                            # This is a simple approximation using atan2 on R components.
+                            # Estimate change in yaw (rotation around the vertical axis) from the
+                            # 3x3 rotation matrix 'R' returned by cv2.recoverPose().
+                            # We assume a 2D planar robot (like a ground robot) so we only care about yaw.
+                            # atan2(y, x) computes the correct angle of a 2D vector, using the signs of both
+                            # inputs to determine the proper quadrant (-π to π). Unlike atan(y/x), it avoids
+                            # ambiguity, making it ideal for directions like robot yaw.
                             dtheta = math.atan2(R[1, 0], R[0, 0])
 
-                            # Compute current orientation cos/sin once for integration
+                            # Compute cosine and sine of the robot's current orientation 'theta'
+                            # (theta is the accumulated yaw from the start).
+                            # These are used to rotate the displacement from the camera frame
+                            # into the odometry/world frame efficiently.
                             cos_theta = math.cos(self.theta)
                             sin_theta = math.sin(self.theta)
 
-                            # Integrate motion into the robot's odom pose using a
-                            # 2D planar approximation where 'dz' is forward and
-                            # 'dx' is lateral (right-positive) in the camera frame.
-                            # We rotate the camera-frame displacement into the odom
-                            # frame using the robot's current yaw (theta).
+                            # Integrate the displacement into the robot's global odometry pose.
+                            # Assumptions:
+                            # - The robot moves in a 2D plane (like a floor).
+                            # - 'dz' is the forward movement in the camera frame
+                            # - 'dx' is the sideways (lateral) movement in the camera frame
+                            #   (positive to the right).
+                            # The camera frame displacement is rotated by the robot's current global
+                            # orientation 'theta' to express motion in the global/world frame.
                             self.x += cos_theta * dz - sin_theta * dx
                             self.y += sin_theta * dz + cos_theta * dx
+
+                            # Update the robot's global orientation (theta) by adding the
+                            # relative change in yaw detected between the two frames.
                             self.theta += dtheta
 
                             # Publish odometry message using the timestamp of the image
