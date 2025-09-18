@@ -490,6 +490,20 @@ class SimpleVisualOdometry(Node):
         odom.pose.pose.orientation.z = qz
         odom.pose.pose.orientation.w = qw
 
+        # --- Covariance (6x6) for nav_msgs/Odometry.pose.covariance (row-major) ---
+        # Covariance tells you how uncertain a measurement is and whether two errors tend to vary together.
+        # A variance (a special case of covariance) is just the uncertainty for one variable — it’s the square of the standard deviation.
+        # A covariance between two variables x and y says whether their errors move together: 
+        # - positive covariance → when x error is +, y error tends to be + too. 
+        # - negative covariance → when x error is +, y error tends to be −.
+        # - zero covariance → errors are (linearly) uncorrelated.
+        #
+        # Why is this important?
+        # - Downstream components (EKF, sensor fusion, robot_localization) use covariance to weight sensors: smaller variance → more trust.
+        # - If you give overly-small variances while your measurement is noisy, the filter will trust bad VO too much and produce wrong fused estimates.
+        # - If variances are too large, your VO will be ignored by the fusion layer.
+        #
+        # Layout (rows/cols): [x, y, z, roll, pitch, yaw]
         # Populate a small, hand-wavy covariance matrix to indicate uncertainty
         # Note: nav_msgs/Odometry.pose.covariance is a 6x6 row-major array.
         odom.pose.covariance[0] = 0.1   # variance on x
