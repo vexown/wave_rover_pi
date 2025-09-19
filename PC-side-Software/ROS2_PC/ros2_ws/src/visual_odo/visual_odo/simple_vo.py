@@ -429,19 +429,17 @@ class SimpleVisualOdometry(Node):
                             cos_theta = math.cos(self.theta)
                             sin_theta = math.sin(self.theta)
 
-                            # Integrate the displacement into the robot's global odometry pose.
+                            # Now we use the movements we calculated (dx for side-to-side, dz for forward/back, and dtheta for turning)
+                            # to update the robot's overall position and direction (self.x, self.y, self.theta).
+                            #
                             # Assumptions:
-                            # - The robot moves in a 2D plane (like a floor).
-                            # - 'dz' is the forward movement in the camera frame
-                            # - 'dx' is the sideways (lateral) movement in the camera frame
-                            #   (positive to the right).
-                            # The camera frame displacement is rotated by the robot's current global
-                            # orientation 'theta' to express motion in the global/world frame.
-                            self.x += cos_theta * dz - sin_theta * dx
-                            self.y += sin_theta * dz + cos_theta * dx
-
-                            # Update the robot's global orientation (theta) by adding the
-                            # relative change in yaw detected between the two frames.
+                            # - The robot moves on a flat surface (like a floor).
+                            # - 'dz' is how much the robot moved forward from the camera's view.
+                            # - 'dx' is how much the robot moved sideways from the camera's view (positive means to the right).
+                            # We adjust these movements based on the robot's current direction (theta) to match the real-world map.
+                            self.x += cos_theta * dz - sin_theta * dx  # Update the robot's forward/back position
+                            self.y += sin_theta * dz + cos_theta * dx  # Update the robot's side-to-side position
+                            # Update the robot's direction by adding the turn we detected between frames.
                             self.theta += dtheta
 
                             # Publish odometry message using the timestamp of the image
@@ -491,24 +489,23 @@ class SimpleVisualOdometry(Node):
         odom.pose.pose.orientation.w = qw
 
         # --- Covariance (6x6) for nav_msgs/Odometry.pose.covariance (row-major) ---
-        # Covariance tells you how uncertain a measurement is and whether two errors tend to vary together.
-        # A variance (a special case of covariance) is just the uncertainty for one variable — it’s the square of the standard deviation.
-        # A covariance between two variables x and y says whether their errors move together: 
-        # - positive covariance → when x error is +, y error tends to be + too. 
-        # - negative covariance → when x error is +, y error tends to be −.
-        # - zero covariance → errors are (linearly) uncorrelated.
+        # Covariance describes the uncertainty in your pose estimate and how errors in different variables relate.
+        # - Variance (diagonal elements): Uncertainty for a single variable, like position or orientation.
+        #   It's the square of the standard deviation (e.g., 0.1 means ~0.316m or rad uncertainty).
+        # - Covariance (off-diagonal): How errors in two variables correlate (positive: errors move together; negative: opposite; zero: independent).
         #
-        # Why is this important?
-        # - Downstream components (EKF, sensor fusion, robot_localization) use covariance to weight sensors: smaller variance → more trust.
-        # - If you give overly-small variances while your measurement is noisy, the filter will trust bad VO too much and produce wrong fused estimates.
-        # - If variances are too large, your VO will be ignored by the fusion layer.
+        # Why it matters:
+        # - Sensor fusion tools (e.g., EKF in robot_localization) use covariance to weight data: lower variance = more trust.
+        # - Too low (e.g., 0.01): Over-trusts noisy data, leading to bad fused estimates.
+        # - Too high (e.g., 1.0): Ignores your VO, reducing its usefulness.
         #
         # Layout (rows/cols): [x, y, z, roll, pitch, yaw]
-        # Populate a small, hand-wavy covariance matrix to indicate uncertainty
+        # Here, we set small variances (0.1) as a rough guess for low uncertainty in x, y, and yaw.
+        # In production, compute from real error data (e.g., experiments with ground truth) or models.
         # Note: nav_msgs/Odometry.pose.covariance is a 6x6 row-major array.
-        odom.pose.covariance[0] = 0.1   # variance on x
-        odom.pose.covariance[7] = 0.1   # variance on y
-        odom.pose.covariance[35] = 0.1  # variance on yaw (theta)
+        odom.pose.covariance[0] = 0.1   # variance on x (m²)
+        odom.pose.covariance[7] = 0.1   # variance on y (m²)
+        odom.pose.covariance[35] = 0.1  # variance on yaw (rad²)
 
         # Publish the odometry message
         self.odom_pub.publish(odom)
@@ -521,13 +518,26 @@ class SimpleVisualOdometry(Node):
 
     def broadcast_transform(self, timestamp):
         """
-        Broadcast two transforms:
-          1) odom -> base_link using the current integrated pose
-          2) base_link -> camera_link representing a fixed camera mount
-
-        The camera transform is broadcast as a regular transform here (not a
-        true static transform publisher) for simplicity — in production you may
-        want to use a dedicated static_transform_publisher or a static TF file.
+        Broadcast two transforms to the ROS TF2 system, which manages coordinate frames:
+        
+        - A transform describes the spatial relationship (position + orientation) between two frames.
+        - Frames are reference points (e.g., 'odom' for odometry origin, 'base_link' for robot base).
+            In ROS, a frame is a coordinate system attached to a specific thing (e.g., 'base_link' for the robot's base, 'camera_link' for the camera).
+            There's also a global frame like 'odom' (odometry origin) or 'map' (world map) that serves as the overall reference point.
+            Transforms relate these frames to each other, allowing everything to be positioned consistently in the global space.
+        - Transforms allow other nodes (e.g., RViz, navigation) to relate data across frames, enabling visualization, mapping, and sensor fusion.
+        
+        Broadcasted transforms:
+        1) odom -> base_link: Dynamic transform using current pose (self.x, self.y, self.theta).
+            - Translation: Robot's position in odom frame.
+            - Rotation: Robot's yaw as quaternion.
+            - Purpose: Tracks robot movement for odometry and visualization.
+        2) base_link -> camera_link: Static transform for camera mount.
+            - Translation: Fixed offset (e.g., 0.1m forward, 0.2m up).
+            - Rotation: Identity (camera points forward).
+            - Purpose: Links camera data to robot frame for accurate sensor integration.
+        
+        Note: Camera transform is sent dynamically here for simplicity; in production, use a static publisher or URDF for efficiency.
         """
         # Create a TransformStamped message for odom -> base_link
         t = TransformStamped()
