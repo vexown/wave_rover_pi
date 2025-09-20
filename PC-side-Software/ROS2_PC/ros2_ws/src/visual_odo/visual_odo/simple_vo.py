@@ -101,6 +101,27 @@ class SimpleVisualOdometry(Node):
         self.y = 0.0  # y position in odom frame (meters)
         self.theta = 0.0  # yaw angle (radians)
 
+        # Declare ROS2 parameters to replace hard-coded values
+        self.declare_parameters('', [
+            ('focal', 800.0),          # Focal length in pixels
+            ('cx', 400.0),             # Principal point x-coordinate
+            ('cy', 300.0),             # Principal point y-coordinate
+            ('scale', 0.1),            # Scale factor for translation
+            ('orb_nfeatures', 500),    # Number of ORB features
+            ('min_matches', 10),       # Minimum number of good matches required
+            ('ransac_thresh', 1.0),    # RANSAC threshold for essential matrix
+            ('max_good_matches', 50),  # Maximum number of good matches to keep
+        ])
+
+        # Retrieve parameter values and set instance variables
+        self.focal_length = self.get_parameter('focal').value
+        self.pp = (self.get_parameter('cx').value, self.get_parameter('cy').value)
+        self.scale = self.get_parameter('scale').value
+        self.orb_nfeatures = self.get_parameter('orb_nfeatures').value
+        self.min_matches = self.get_parameter('min_matches').value
+        self.ransac_thresh = self.get_parameter('ransac_thresh').value
+        self.max_good_matches = self.get_parameter('max_good_matches').value
+
         # ORB feature detector
         # The 'nfeatures' parameter sets the maximum number of keypoints ORB will detect in each image frame. 
         # - More features → more keypoints to match → improves robustness of motion estimation
@@ -114,7 +135,7 @@ class SimpleVisualOdometry(Node):
         #   * 100–300 → very lightweight and fast, but less accurate in complex or low-texture scenes
         #   * 300–800 → good balance between speed and accuracy (500 is a common default)
         #   * 800–2000+ → very robust but CPU heavy; useful for high-resolution images or offline processing where speed is less critical.
-        self.orb = cv2.ORB_create(nfeatures=500)
+        self.orb = cv2.ORB_create(nfeatures=self.orb_nfeatures)
 
         # Brute-Force Matcher for comparing ORB descriptors between two frames.
         #
@@ -145,52 +166,6 @@ class SimpleVisualOdometry(Node):
         # If you increase ORB's nfeatures significantly, you may need to switch to
         # a faster approximate matcher like FLANN for real-time performance.
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-
-        # Simplified camera intrinsics
-        #
-        # These are approximate values for your camera's internal parameters
-        # (a.k.a. intrinsics). They are used by OpenCV's functions like
-        # findEssentialMat() and recoverPose() to correctly interpret how
-        # points move between frames and estimate motion in 3D space.
-        #
-        # 1. FOCAL LENGTH (in pixels)
-        #    - This represents how "zoomed in" the camera is.
-        #    - It tells the math how much the image stretches as objects get closer or further.
-        #    - Typical values depend on your camera and image resolution.
-        #      For example, 800 is a rough guess for a 640x480 or 800x600 image.
-        #    - If this is wrong, the scale and motion direction from visual odometry
-        #      will be inaccurate or unstable.
-        self.focal_length = 800
-
-        # 2. PRINCIPAL POINT (cx, cy)
-        #    - This is the pixel coordinate where the camera's optical axis
-        #      (center of the lens) hits the image sensor.
-        #    - For many cameras, it's approximately the image center.
-        #      Example: for an 800x600 image → pp = (400, 300).
-        #    - If slightly off, the math still works, but accuracy drops.
-        self.pp = (400, 300)
-
-        # Why you need REAL calibration:
-        # --------------------------------
-        # These values are only rough guesses! Every real camera has tiny
-        # imperfections: the lens might bend the image (distortion), the true
-        # focal length might differ slightly, or the principal point may not
-        # be exactly at the center.
-        #
-        # Camera calibration is the process of taking pictures of a known
-        # pattern (like a checkerboard) and using OpenCV to measure:
-        #    - Focal length (fx, fy)
-        #    - Principal point (cx, cy)
-        #    - Lens distortion coefficients
-        #
-        # With real calibration:
-        #    - The recovered motion will be much more accurate and stable.
-        #    - It allows you to undistort images so straight lines stay straight,
-        #      which is critical for precise visual odometry.
-        #
-        # For now, these approximate values are "good enough" to get something
-        # working, but for reliable robotics, always replace them with real
-        # calibration data from OpenCV's camera_calibration tutorial.
 
         # Timer to periodically publish the static transform even if no motion
         # create_timer(period, callback) where period is in seconds
@@ -299,10 +274,10 @@ class SimpleVisualOdometry(Node):
                     #   fewer matches (like 30).
                     # - For fast movement or very dynamic environments, you might
                     #   increase this limit to 100 or more to maintain accuracy.
-                    good_matches = matches[:min(50, len(matches))]
+                    good_matches = matches[:min(self.max_good_matches, len(matches))]
 
                     # Continue only if we have a minimum number of good matches
-                    if len(good_matches) > 10:
+                    if len(good_matches) > self.min_matches:
                         # Extract the matched keypoint coordinates for both frames
                         # prev_pts: points in previous frame corresponding to queryIdx
                         prev_pts = np.float32([self.prev_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -350,11 +325,11 @@ class SimpleVisualOdometry(Node):
                         # - mask: A binary array indicating which matches were
                         #   classified as inliers (1 = good, 0 = rejected).
                         E, mask = cv2.findEssentialMat(curr_pts, prev_pts,      # The matched 2D point coordinates between current and previous frames.
-                                                       focal=self.focal_length, # The camera's approximate focal length in pixels.
-                                                       pp=self.pp,              # The principal point (cx, cy), usually the image center.
+                                                       focal=self.focal_length, # The camera's approximate focal length in pixels
+                                                       pp=self.pp,              # The principal point (cx, cy), usually the image center
                                                        method=cv2.RANSAC,       # Tell OpenCV to use RANSAC for outlier rejection.
                                                        prob=0.999,              # The probability that the correct solution is found.
-                                                       threshold=1.0)           # Pixel error tolerance for deciding whether a point fits the model.
+                                                       threshold=self.ransac_thresh)  # Pixel error tolerance for deciding whether a point fits the model
 
                         # If a valid essential matrix was found, we use it to get the relative pose.
                         #
@@ -394,7 +369,7 @@ class SimpleVisualOdometry(Node):
                             # Without proper scale (e.g., stereo vision, depth sensor, wheel odometry),
                             # this value is just a placeholder for visualization. Setting it wrong will
                             # make the trajectory in RViz appear too large or too small.
-                            scale = 0.1  # TODO: Replace with actual scale estimation method
+                            scale = self.scale # TODO: Replace with actual scale estimation method
 
                             # Even though 't' is just a direction, it's still a 3D vector
                             # with proportions between its components (left/right, forward/back).
