@@ -111,6 +111,7 @@ class SimpleVisualOdometry(Node):
             ('min_matches', 10),       # Minimum number of good matches required
             ('ransac_thresh', 1.0),    # RANSAC threshold for essential matrix
             ('max_good_matches', 50),  # Maximum number of good matches to keep
+            ('ratio_thresh', 0.75),    # Lowe's ratio test threshold for kNN matching
         ])
 
         # Retrieve parameter values and set instance variables
@@ -121,6 +122,7 @@ class SimpleVisualOdometry(Node):
         self.min_matches = self.get_parameter('min_matches').value
         self.ransac_thresh = self.get_parameter('ransac_thresh').value
         self.max_good_matches = self.get_parameter('max_good_matches').value
+        self.ratio_thresh = self.get_parameter('ratio_thresh').value
 
         # ORB feature detector
         # The 'nfeatures' parameter sets the maximum number of keypoints ORB will detect in each image frame. 
@@ -149,23 +151,39 @@ class SimpleVisualOdometry(Node):
         # - A distance of 0 means the descriptors are identical (perfect match),
         #   while a larger number means they are less similar.
         #
-        # crossCheck=True → This requires matches to be mutual (symmetric):
-        # - Point A in frame 1 must match point B in frame 2,
-        #   AND point B in frame 2 must match point A in frame 1.
-        # - This helps filter out bad matches automatically and gives more reliable matches,
-        #   but it is stricter and can result in fewer total matches.
+        # crossCheck=False → We disable cross-checking to enable k-nearest neighbors (kNN) matching.
+        # Instead of requiring mutual best matches, we'll use Lowe's ratio test for better
+        # outlier rejection. The ratio test is more sophisticated and effective than crossCheck
+        # because it evaluates the uniqueness of each match by comparing the distance to the 
+        # best match against the distance to the second-best match.
         #
-        # Summary of the process:
+        # Why kNN + ratio test is superior to crossCheck:
+        # ------------------------------------------------
+        # 1. **Better ambiguity detection**: crossCheck only ensures mutual best matches,
+        #    but doesn't detect when a feature has multiple similar candidates (ambiguous matches).
+        #    The ratio test specifically identifies and rejects such ambiguous cases.
+        #
+        # 2. **More robust filtering**: Lowe's ratio test (from the original SIFT paper) has been
+        #    proven to be more effective at removing false matches in challenging scenarios like
+        #    repetitive textures, motion blur, or scenes with similar-looking features.
+        #
+        # 3. **Tunable precision**: The ratio threshold (typically 0.75) can be adjusted to
+        #    balance between match quantity and quality, whereas crossCheck is binary.
+        #
+        # 4. **Industry standard**: This approach is used in production SLAM systems and
+        #    computer vision applications where reliability is critical.
+        #
+        # Summary of the improved process:
         # 1. ORB detects keypoints in both the current frame and previous frame.
         # 2. Each keypoint gets a binary descriptor.
-        # 3. BFMatcher compares every descriptor in the previous frame to every descriptor
-        #    in the current frame using Hamming distance (brute-force search).
-        # 4. The best matches (lowest distances) are returned.
+        # 3. BFMatcher finds the k=2 nearest neighbors for each descriptor using Hamming distance.
+        # 4. Lowe's ratio test filters matches: keep only if best_distance < 0.75 * second_best_distance.
+        # 5. This ensures we only keep distinctive, unambiguous matches.
         #
         # Note: Brute-force matching can be slow if there are many keypoints.
         # If you increase ORB's nfeatures significantly, you may need to switch to
         # a faster approximate matcher like FLANN for real-time performance.
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
         # Timer to periodically publish the static transform even if no motion
         # create_timer(period, callback) where period is in seconds
@@ -231,50 +249,88 @@ class SimpleVisualOdometry(Node):
                 # prev_des: descriptors from the previous frame
                 # des: descriptors from the current frame
                 if self.prev_des is not None and des is not None and len(des) > 10:
-                    # Match descriptors between previous and current frames
-                    # matches is a list of DMatch objects
-                    matches = self.matcher.match(self.prev_des, des)
-
-                    # Sort matches by descriptor distance (lower is better)
-                    matches = sorted(matches, key=lambda x: x.distance)
-
-                    # Keep only a limited number of "good" matches (top N).
+                    # ========================================================================
+                    # IMPROVED MATCHING: k-Nearest Neighbors (kNN) + Lowe's Ratio Test
+                    # ========================================================================
+                    # 
+                    # Instead of simple brute-force matching with crossCheck, we use a more
+                    # sophisticated approach that provides better outlier rejection and 
+                    # higher-quality matches for visual odometry.
                     #
-                    # ORB was initially configured to detect up to 500 features per frame.
-                    # However, when comparing two frames, not all those features will
-                    # have reliable matches — many might be weak, noisy, or incorrect.
+                    # The kNN matching finds the k=2 best matches for each descriptor, then
+                    # applies Lowe's ratio test to filter out ambiguous matches.
+                    
+                    # Step 1: Find k=2 nearest neighbors for each descriptor
+                    # -------------------------------------------------------
+                    # For each descriptor in the previous frame, find the 2 closest matches
+                    # in the current frame. This gives us both the best match and the 
+                    # second-best match for comparison.
+                    knn_matches = self.matcher.knnMatch(self.prev_des, des, k=2)
+                    
+                    # Step 2: Apply Lowe's Ratio Test for outlier rejection
+                    # -----------------------------------------------------
+                    # The ratio test compares the distance of the best match to the distance
+                    # of the second-best match. If the best match is significantly better
+                    # (lower distance) than the second-best, we consider it a good match.
                     #
-                    # After the brute-force matching step, we sort matches by their
-                    # distance score (lower distance = better match). By taking only
-                    # the *top 50*, we focus on the most reliable correspondences.
+                    # Mathematical principle:
+                    # If best_distance / second_best_distance < threshold (typically 0.75),
+                    # then the match is distinctive and likely correct.
                     #
-                    # Why detect 500 features but only keep 50?
-                    # -------------------------------------------------------------
-                    # 1. **High initial pool = higher chance of strong matches:**
-                    #    - If you only detected 50 features at the start, you might
-                    #      miss good ones entirely if they are in areas with motion blur,
-                    #      poor texture, or occlusion.
-                    #    - Detecting 500 gives the algorithm a wide net to capture
-                    #      all potentially useful details.
+                    # Why 0.75 threshold?
+                    # - This value comes from David Lowe's original SIFT paper (2004)
+                    # - Empirically proven to work well across various scenarios
+                    # - Lower values (0.6-0.7) = stricter filtering, fewer but higher quality matches
+                    # - Higher values (0.8-0.9) = more permissive, more matches but potentially noisier
                     #
-                    # 2. **Filtering later improves robustness:**
-                    #    - The Essential Matrix calculation (cv2.findEssentialMat)
-                    #      is sensitive to outliers (bad matches).
-                    #    - By trimming to the best 50, we reduce the risk of noisy
-                    #      points introducing large errors.
+                    # Why this works better than crossCheck:
+                    # 1. **Detects ambiguous matches**: If a feature looks similar to multiple
+                    #    features in the other frame, the ratio between best and second-best
+                    #    distances will be close to 1.0, indicating uncertainty.
+                    # 2. **Handles repetitive patterns**: In scenes with repetitive textures
+                    #    (like brick walls, windows), crossCheck might pass matches that are
+                    #    geometrically inconsistent, but ratio test catches them.
+                    # 3. **Better for motion blur**: When features are slightly distorted,
+                    #    ratio test is more forgiving of small descriptor variations while
+                    #    still rejecting truly bad matches.
+                    
+                    good_matches = []
+                    for match_pair in knn_matches:
+                        # Ensure we have exactly 2 matches (some descriptors might have fewer neighbors)
+                        if len(match_pair) == 2:
+                            best_match, second_best_match = match_pair
+                            
+                            # Apply Lowe's ratio test
+                            # If the best match is significantly better than the second-best,
+                            # we consider it a reliable match
+                            if best_match.distance < self.ratio_thresh * second_best_match.distance:
+                                good_matches.append(best_match)
+                    
+                    # Step 3: Limit the number of matches for performance and robustness
+                    # -----------------------------------------------------------------
+                    # Even after ratio test filtering, we still limit the total number of matches.
+                    # This serves multiple purposes:
                     #
-                    # 3. **Performance balance:**
-                    #    - Using all 500 matches every frame would be slower and
-                    #      might overwhelm the math with redundant or noisy data.
-                    #    - 50 strong matches are often *enough* to estimate
-                    #      camera motion while keeping computation fast.
+                    # 1. **Computational efficiency**: Essential matrix estimation and RANSAC
+                    #    scale with the number of points. Too many points slow down processing.
                     #
-                    # Tuning:
-                    # - For slow camera movement and stable scenes, you can even use
-                    #   fewer matches (like 30).
-                    # - For fast movement or very dynamic environments, you might
-                    #   increase this limit to 100 or more to maintain accuracy.
-                    good_matches = matches[:min(self.max_good_matches, len(matches))]
+                    # 2. **Memory management**: Large numbers of matches consume more memory
+                    #    and can overwhelm the algorithm on resource-constrained systems.
+                    #
+                    # 3. **RANSAC effectiveness**: While RANSAC handles outliers, having
+                    #    a reasonable number of high-quality matches improves convergence
+                    #    and reduces the chance of finding incorrect solutions.
+                    #
+                    # 4. **Quality over quantity**: 50-100 excellent matches are much better
+                    #    than 500 mediocre ones for pose estimation accuracy.
+                    #
+                    # Note: We don't need to sort by distance anymore since the ratio test
+                    # already ensures we're getting high-quality matches. However, if you want
+                    # to be extra conservative, you can uncomment the sorting line below.
+                    # good_matches = sorted(good_matches, key=lambda x: x.distance)
+                    
+                    # Limit to maximum number of matches
+                    good_matches = good_matches[:min(self.max_good_matches, len(good_matches))]
 
                     # Continue only if we have a minimum number of good matches
                     if len(good_matches) > self.min_matches:

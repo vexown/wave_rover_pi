@@ -164,6 +164,37 @@ def generate_launch_description():
             #   fewer matches (like 30).
             # - For fast movement or very dynamic environments, you might
             #   increase this limit to 100 or more to maintain accuracy.
+            #
+            # 8. RATIO THRESHOLD (Lowe's Ratio Test)
+            #    - This parameter controls the threshold for Lowe's ratio test in k-nearest
+            #      neighbors (kNN) matching, which is used to filter out ambiguous feature matches.
+            #    - The ratio test compares the distance of the best match to the distance of the
+            #      second-best match. A match is kept only if:
+            #      best_match_distance < ratio_thresh × second_best_match_distance
+            #
+            # Why this parameter matters:
+            # ---------------------------
+            # - **Lower values (0.6-0.7)**: Stricter filtering, fewer but higher quality matches
+            #   → Better for scenes with repetitive patterns or when precision is critical
+            #   → May result in fewer matches, potentially causing tracking loss in low-texture areas
+            #
+            # - **Higher values (0.8-0.9)**: More permissive, more matches but potentially noisier
+            #   → Better for challenging lighting conditions or when you need more matches
+            #   → May allow some ambiguous matches through, potentially affecting accuracy
+            #
+            # - **Default (0.75)**: Proven optimal value from David Lowe's original SIFT paper
+            #   → Good balance between match quality and quantity for most scenarios
+            #   → Widely used in production computer vision systems
+            #
+            # When to adjust:
+            # ---------------
+            # - **Repetitive textures** (brick walls, windows): Use lower values (0.6-0.7)
+            # - **Low-texture environments**: Use higher values (0.8-0.85) to get more matches
+            # - **Motion blur or poor lighting**: Slightly higher values (0.8) can help
+            # - **High-precision applications**: Lower values (0.65-0.7) for better accuracy
+            #
+            # This replaces the previous crossCheck method and provides superior outlier
+            # rejection for visual odometry applications.
 
             parameters=[
                 {'focal': 800.0},        # Focal length in pixels
@@ -173,7 +204,8 @@ def generate_launch_description():
                 {'orb_nfeatures': 500},  # Number of ORB features
                 {'min_matches': 10},     # Minimum number of good matches
                 {'ransac_thresh': 1.0},  # RANSAC threshold
-                {'max_good_matches': 50} # Maximum number of good matches
+                {'max_good_matches': 50}, # Maximum number of good matches
+                {'ratio_thresh': 0.75}   # Lowe's ratio test threshold for kNN matching
             ]
         ),
     ])
