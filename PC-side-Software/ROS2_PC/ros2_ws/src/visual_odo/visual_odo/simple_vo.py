@@ -112,6 +112,7 @@ class SimpleVisualOdometry(Node):
             ('ransac_thresh', 1.0),    # RANSAC threshold for essential matrix
             ('max_good_matches', 50),  # Maximum number of good matches to keep
             ('ratio_thresh', 0.75),    # Lowe's ratio test threshold for kNN matching
+            ('min_inliers', 5),        # Minimum number of RANSAC inliers for pose estimation
         ])
 
         # Retrieve parameter values and set instance variables
@@ -123,6 +124,7 @@ class SimpleVisualOdometry(Node):
         self.ransac_thresh = self.get_parameter('ransac_thresh').value
         self.max_good_matches = self.get_parameter('max_good_matches').value
         self.ratio_thresh = self.get_parameter('ratio_thresh').value
+        self.min_inliers = self.get_parameter('min_inliers').value
 
         # ORB feature detector
         # The 'nfeatures' parameter sets the maximum number of keypoints ORB will detect in each image frame. 
@@ -395,86 +397,155 @@ class SimpleVisualOdometry(Node):
                         # It doesn’t give the exact matching pixel — it gives a line in image B where the match must sit. That line is called the epipolar line. 
                         # The essential matrix encodes the camera rotation and the direction of translation between the two views.
                         if E is not None:
-                            # Recover the relative pose (rotation R and translation t)
-                            # between the two frames from the essential matrix.
+                            # ========================================================================
+                            # OUTLIER REJECTION: Filter matches using RANSAC inliers
+                            # ========================================================================
                             #
-                            # - R (3x3 matrix): how the camera rotated between the
-                            #   previous frame and the current frame.
+                            # The findEssentialMat function above used RANSAC to find the best essential
+                            # matrix while rejecting outlier matches. The 'mask' returned tells us which
+                            # of our original matches were considered "inliers" (geometrically consistent)
+                            # and which were "outliers" (rejected as inconsistent with the motion model).
                             #
-                            # - t (3x1 vector): the *direction* the camera moved,
-                            #   but NOT the actual distance.
-                            #     Example: t might indicate "forward and slightly to the right",
-                            #     but it won't tell you if the camera moved 1 cm or 1 meter.
+                            # Why filter to inliers only?
+                            # ----------------------------
+                            # 1. **Improved pose accuracy**: Using only the points that fit the geometric
+                            #    model reduces noise and bias in the final rotation and translation estimates.
                             #
-                            # Why no scale? With a single (monocular) camera, depth
-                            # cannot be directly measured — only the relative
-                            # direction of motion can be inferred from parallax.
-                            # To get real-world distance, you'd need extra info such as
-                            # stereo cameras, LiDAR, IMU data, or wheel odometry.
-                            _, R, t, mask = cv2.recoverPose(E, curr_pts, prev_pts,
-                                                             focal=self.focal_length,
-                                                             pp=self.pp)
-
-                            # 'scale' converts the unit-length translation vector (t) from recoverPose
-                            # into a real-world distance. Monocular visual odometry cannot determine
-                            # absolute scale by itself because a single camera only sees relative motion.
-                            # 
-                            # Example: if recoverPose returns t=[0,0,1] and the robot actually moved
-                            # 20 cm forward, then scale=0.20 (in meters). 
-                            # 
-                            # Without proper scale (e.g., stereo vision, depth sensor, wheel odometry),
-                            # this value is just a placeholder for visualization. Setting it wrong will
-                            # make the trajectory in RViz appear too large or too small.
-                            scale = self.scale # TODO: Replace with actual scale estimation method
-
-                            # Even though 't' is just a direction, it's still a 3D vector
-                            # with proportions between its components (left/right, forward/back).
-                            # By multiplying 't' by a scalar value ('scale'), we stretch
-                            # this unit vector into a real-world displacement. 
-                            #   Example:
-                            #       t = [0, 0, 1] → "straight forward"
-                            #       scale = 0.20   → 20 cm per step
-                            #       real translation = scale * t = [0, 0, 0.20]
+                            # 2. **Consistent data**: The essential matrix E was computed using these exact
+                            #    inlier points, so using the same points for pose recovery ensures consistency.
                             #
-                            # Camera coordinate convention (OpenCV default):
-                            #   - X (t[0]) = left/right (lateral motion)
-                            #   - Z (t[2]) = forward/backward motion
+                            # 3. **Reduced computational load**: Fewer points mean faster pose recovery,
+                            #    especially beneficial on resource-constrained systems like Raspberry Pi.
                             #
-                            # Applying scale to each component gives the actual distance
-                            # moved along that axis in the chosen unit (e.g., meters).
-                            dx = scale * t[0, 0]  # Sideways motion
-                            dz = scale * t[2, 0]  # Forward motion
-
-                            # Estimate change in yaw (rotation around the vertical axis) from the
-                            # 3x3 rotation matrix 'R' returned by cv2.recoverPose().
-                            # We assume a 2D planar robot (like a ground robot) so we only care about yaw.
-                            # atan2(y, x) computes the correct angle of a 2D vector, using the signs of both
-                            # inputs to determine the proper quadrant (-π to π). Unlike atan(y/x), it avoids
-                            # ambiguity, making it ideal for directions like robot yaw.
-                            dtheta = math.atan2(R[1, 0], R[0, 0])
-
-                            # Compute cosine and sine of the robot's current orientation 'theta'
-                            # (theta is the accumulated yaw from the start).
-                            # These are used to rotate the displacement from the camera frame
-                            # into the odometry/world frame efficiently.
-                            cos_theta = math.cos(self.theta)
-                            sin_theta = math.sin(self.theta)
-
-                            # Now we use the movements we calculated (dx for side-to-side, dz for forward/back, and dtheta for turning)
-                            # to update the robot's overall position and direction (self.x, self.y, self.theta).
+                            # 4. **Better debugging**: Monitoring the inlier ratio helps assess the quality
+                            #    of feature matching and can indicate issues like motion blur, lighting
+                            #    changes, or challenging scenes.
                             #
-                            # Assumptions:
-                            # - The robot moves on a flat surface (like a floor).
-                            # - 'dz' is how much the robot moved forward from the camera's view.
-                            # - 'dx' is how much the robot moved sideways from the camera's view (positive means to the right).
-                            # We adjust these movements based on the robot's current direction (theta) to match the real-world map.
-                            self.x += cos_theta * dz - sin_theta * dx  # Update the robot's forward/back position
-                            self.y += sin_theta * dz + cos_theta * dx  # Update the robot's side-to-side position
-                            # Update the robot's direction by adding the turn we detected between frames.
-                            self.theta += dtheta
+                            # How the mask works:
+                            # -------------------
+                            # - mask is a numpy array with the same length as curr_pts and prev_pts
+                            # - mask[i] = 1 means the i-th match is an inlier (good match)
+                            # - mask[i] = 0 means the i-th match is an outlier (rejected by RANSAC)
+                            # - mask.ravel() flattens the mask to 1D for boolean indexing
+                            
+                            # Extract only the inlier points using the RANSAC mask
+                            inlier_curr_pts = curr_pts[mask.ravel() == 1]
+                            inlier_prev_pts = prev_pts[mask.ravel() == 1]
+                            
+                            # Calculate and log inlier statistics for monitoring and debugging
+                            # This helps assess the quality of feature matching:
+                            # - High inlier ratio (>70%) = good feature tracking, stable scene
+                            # - Medium inlier ratio (40-70%) = acceptable, some challenging features
+                            # - Low inlier ratio (<40%) = poor matching, may indicate motion blur,
+                            #   lighting changes, or insufficient texture in the scene
+                            inlier_count = np.sum(mask)
+                            total_matches = len(mask)
+                            inlier_ratio = inlier_count / total_matches if total_matches > 0 else 0.0
+                            
+                            # Log inlier statistics (use debug level to avoid spam, but can be changed to info for debugging)
+                            self.get_logger().debug(f'RANSAC outlier rejection: {inlier_count}/{total_matches} inliers ({inlier_ratio:.1%})')
+                            
+                            # Continue with pose recovery only if we have sufficient inliers
+                            # We need at least self.min_inliers points for recoverPose to work reliably
+                            if inlier_count >= self.min_inliers:
+                                # Recover the relative pose (rotation R and translation t)
+                                # between the two frames from the essential matrix.
+                                #
+                                # Now using only the filtered inlier points for more accurate pose estimation:
+                                # - R (3x3 matrix): how the camera rotated between the
+                                #   previous frame and the current frame.
+                                #
+                                # - t (3x1 vector): the *direction* the camera moved,
+                                #   but NOT the actual distance.
+                                #     Example: t might indicate "forward and slightly to the right",
+                                #     but it won't tell you if the camera moved 1 cm or 1 meter.
+                                #
+                                # Why no scale? With a single (monocular) camera, depth
+                                # cannot be directly measured — only the relative
+                                # direction of motion can be inferred from parallax.
+                                # To get real-world distance, you'd need extra info such as
+                                # stereo cameras, LiDAR, IMU data, or wheel odometry.
+                                #
+                                # Note: recoverPose will return its own mask indicating which of the
+                                # inlier points passed additional geometric checks (cheirality constraint).
+                                # This second mask further filters for points that are in front of both cameras.
+                                _, R, t, pose_mask = cv2.recoverPose(E, inlier_curr_pts, inlier_prev_pts,
+                                                                   focal=self.focal_length,
+                                                                   pp=self.pp)
+                                
+                                # Log additional pose recovery statistics if desired
+                                pose_inliers = np.sum(pose_mask) if pose_mask is not None else inlier_count
+                                self.get_logger().debug(f'Pose recovery: {pose_inliers}/{inlier_count} points passed cheirality check')
+                                
+                                # 'scale' converts the unit-length translation vector (t) from recoverPose
+                                # into a real-world distance. Monocular visual odometry cannot determine
+                                # absolute scale by itself because a single camera only sees relative motion.
+                                # 
+                                # Example: if recoverPose returns t=[0,0,1] and the robot actually moved
+                                # 20 cm forward, then scale=0.20 (in meters). 
+                                # 
+                                # Without proper scale (e.g., stereo vision, depth sensor, wheel odometry),
+                                # this value is just a placeholder for visualization. Setting it wrong will
+                                # make the trajectory in RViz appear too large or too small.
+                                scale = self.scale # TODO: Replace with actual scale estimation method
 
-                            # Publish odometry message using the timestamp of the image
-                            self.publish_odometry(msg.header.stamp)
+                                # Even though 't' is just a direction, it's still a 3D vector
+                                # with proportions between its components (left/right, forward/back).
+                                # By multiplying 't' by a scalar value ('scale'), we stretch
+                                # this unit vector into a real-world displacement. 
+                                #   Example:
+                                #       t = [0, 0, 1] → "straight forward"
+                                #       scale = 0.20   → 20 cm per step
+                                #       real translation = scale * t = [0, 0, 0.20]
+                                #
+                                # Camera coordinate convention (OpenCV default):
+                                #   - X (t[0]) = left/right (lateral motion)
+                                #   - Z (t[2]) = forward/backward motion
+                                #
+                                # Applying scale to each component gives the actual distance
+                                # moved along that axis in the chosen unit (e.g., meters).
+                                dx = scale * t[0, 0]  # Sideways motion
+                                dz = scale * t[2, 0]  # Forward motion
+
+                                # Estimate change in yaw (rotation around the vertical axis) from the
+                                # 3x3 rotation matrix 'R' returned by cv2.recoverPose().
+                                # We assume a 2D planar robot (like a ground robot) so we only care about yaw.
+                                # atan2(y, x) computes the correct angle of a 2D vector, using the signs of both
+                                # inputs to determine the proper quadrant (-π to π). Unlike atan(y/x), it avoids
+                                # ambiguity, making it ideal for directions like robot yaw.
+                                dtheta = math.atan2(R[1, 0], R[0, 0])
+
+                                # Compute cosine and sine of the robot's current orientation 'theta'
+                                # (theta is the accumulated yaw from the start).
+                                # These are used to rotate the displacement from the camera frame
+                                # into the odometry/world frame efficiently.
+                                cos_theta = math.cos(self.theta)
+                                sin_theta = math.sin(self.theta)
+
+                                # Now we use the movements we calculated (dx for side-to-side, dz for forward/back, and dtheta for turning)
+                                # to update the robot's overall position and direction (self.x, self.y, self.theta).
+                                #
+                                # Assumptions:
+                                # - The robot moves on a flat surface (like a floor).
+                                # - 'dz' is how much the robot moved forward from the camera's view.
+                                # - 'dx' is how much the robot moved sideways from the camera's view (positive means to the right).
+                                # We adjust these movements based on the robot's current direction (theta) to match the real-world map.
+                                self.x += cos_theta * dz - sin_theta * dx  # Update the robot's forward/back position
+                                self.y += sin_theta * dz + cos_theta * dx  # Update the robot's side-to-side position
+                                # Update the robot's direction by adding the turn we detected between frames.
+                                self.theta += dtheta
+
+                                # Publish odometry message using the timestamp of the image
+                                self.publish_odometry(msg.header.stamp)
+                            else:
+                                # Not enough inliers to reliably estimate pose
+                                # Skip this frame and continue with previous pose estimate
+                                self.get_logger().debug(f'Insufficient inliers ({inlier_count}) for pose estimation, skipping frame')
+                                # Store current frame data for next iteration
+                                self.prev_gray = gray.copy()
+                                self.prev_kp = kp
+                                self.prev_des = des
+                                return
 
             # Save the current frame as previous for the next callback
             # .copy() ensures we keep a separate array rather than a view

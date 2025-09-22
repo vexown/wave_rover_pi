@@ -195,6 +195,49 @@ def generate_launch_description():
             #
             # This replaces the previous crossCheck method and provides superior outlier
             # rejection for visual odometry applications.
+            #
+            # 9. MINIMUM INLIERS (RANSAC Outlier Rejection)
+            #    - This parameter sets the minimum number of inlier points required after
+            #      RANSAC filtering to proceed with pose estimation via recoverPose().
+            #    - RANSAC (used in findEssentialMat) identifies which feature matches are
+            #      geometrically consistent with the camera motion model and which are outliers.
+            #
+            # Why this parameter is important:
+            # -------------------------------
+            # - **Reliability threshold**: Too few inlier points make pose estimation unreliable
+            #   and prone to noise. The essential matrix might be computed correctly, but
+            #   recovering accurate rotation and translation requires sufficient geometric constraints.
+            #
+            # - **Quality control**: If most matches are rejected as outliers, it indicates
+            #   poor feature tracking conditions (motion blur, lighting changes, low texture).
+            #   Skipping such frames prevents accumulation of incorrect pose estimates.
+            #
+            # - **Computational efficiency**: Avoiding pose computation on insufficient data
+            #   saves processing time for frames that would produce unreliable results anyway.
+            #
+            # Parameter guidelines:
+            # --------------------
+            # - **Conservative (5-8 inliers)**: Good for most scenarios, ensures reliable pose recovery
+            #   → Recommended for stable indoor environments or good lighting conditions
+            #   → May skip more frames in challenging conditions but maintains accuracy
+            #
+            # - **Permissive (3-4 inliers)**: Allows pose estimation with fewer constraints
+            #   → Useful for low-texture environments or when you need continuous tracking
+            #   → May be less accurate but provides more frequent pose updates
+            #
+            # - **Strict (8+ inliers)**: Very conservative, only processes high-quality matches
+            #   → Best for high-precision applications or outdoor environments with rich features
+            #   → May lose tracking more frequently but ensures very reliable estimates
+            #
+            # Real-world considerations:
+            # -------------------------
+            # - **Fast motion**: Use higher values (6-8) as motion blur reduces match quality
+            # - **Static/slow motion**: Lower values (3-5) may be sufficient
+            # - **Rich textures**: Can use lower values as matches are typically higher quality
+            # - **Poor lighting/low texture**: May need lower values to maintain tracking
+            #
+            # Monitoring tip: Watch the debug logs for "RANSAC outlier rejection" messages
+            # to see typical inlier counts in your environment and adjust accordingly.
 
             parameters=[
                 {'focal': 800.0},        # Focal length in pixels
@@ -205,7 +248,8 @@ def generate_launch_description():
                 {'min_matches': 10},     # Minimum number of good matches
                 {'ransac_thresh': 1.0},  # RANSAC threshold
                 {'max_good_matches': 50}, # Maximum number of good matches
-                {'ratio_thresh': 0.75}   # Lowe's ratio test threshold for kNN matching
+                {'ratio_thresh': 0.75},  # Lowe's ratio test threshold for kNN matching
+                {'min_inliers': 5}       # Minimum RANSAC inliers for pose estimation
             ]
         ),
     ])
