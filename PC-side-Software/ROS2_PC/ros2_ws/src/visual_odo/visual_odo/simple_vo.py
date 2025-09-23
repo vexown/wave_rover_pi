@@ -113,6 +113,7 @@ class SimpleVisualOdometry(Node):
             ('max_good_matches', 50),  # Maximum number of good matches to keep
             ('ratio_thresh', 0.75),    # Lowe's ratio test threshold for kNN matching
             ('min_inliers', 5),        # Minimum number of RANSAC inliers for pose estimation
+            ('enable_debug_viz', False), # Enable debug visualization
         ])
 
         # Retrieve parameter values and set instance variables
@@ -125,6 +126,11 @@ class SimpleVisualOdometry(Node):
         self.max_good_matches = self.get_parameter('max_good_matches').value
         self.ratio_thresh = self.get_parameter('ratio_thresh').value
         self.min_inliers = self.get_parameter('min_inliers').value
+        self.debug_viz_enabled = self.get_parameter('enable_debug_viz').value
+
+        # Debug visualization publisher (only create if enabled)
+        if self.debug_viz_enabled:
+            self.debug_pub = self.create_publisher(Image, '/visual_odo/debug_image', 10)
 
         # ORB feature detector
         # The 'nfeatures' parameter sets the maximum number of keypoints ORB will detect in each image frame. 
@@ -477,6 +483,19 @@ class SimpleVisualOdometry(Node):
                                 pose_inliers = np.sum(pose_mask) if pose_mask is not None else inlier_count
                                 self.get_logger().debug(f'Pose recovery: {pose_inliers}/{inlier_count} points passed cheirality check')
                                 
+                                # ========================================================================
+                                # DEBUG VISUALIZATION: Show feature matches and inliers
+                                # ========================================================================
+                                # 
+                                # If debug visualization is enabled, create and publish an image showing:
+                                # - All feature matches (blue lines)
+                                # - RANSAC inlier matches (green lines)  
+                                # - Match statistics as text overlay
+                                #
+                                # This provides immediate visual feedback for algorithm development and tuning.
+                                if self.debug_viz_enabled:
+                                    self.publish_debug_visualization(cv_image, kp, good_matches, mask)
+                                
                                 # 'scale' converts the unit-length translation vector (t) from recoverPose
                                 # into a real-world distance. Monocular visual odometry cannot determine
                                 # absolute scale by itself because a single camera only sees relative motion.
@@ -696,6 +715,90 @@ class SimpleVisualOdometry(Node):
         timestamp = self.get_clock().now().to_msg()
         # Delegate to broadcast_transform which fills and sends both transforms
         self.broadcast_transform(timestamp)
+
+    def publish_debug_visualization(self, current_image, current_kp, matches, mask):
+        """
+        Create and publish a debug visualization showing feature matches and inliers.
+        
+        This method creates a side-by-side image showing the previous frame (left) and 
+        current frame (right) with feature matches drawn as colored lines:
+        - Blue lines: All feature matches between frames
+        - Green lines: Inlier matches that passed RANSAC filtering
+        - Text overlay: Shows total matches and inlier count
+        
+        Args:
+            current_image: The current BGR image from the camera
+            current_kp: Current frame keypoints from ORB detector
+            matches: List of DMatch objects representing feature correspondences
+            mask: RANSAC mask indicating which matches are inliers (1) or outliers (0)
+        """
+        try:
+            # Only proceed if we have a previous frame to compare against
+            if self.prev_gray is not None and self.prev_kp is not None:
+                # Convert grayscale previous frame back to BGR for visualization
+                # (OpenCV's drawMatches requires both images to have the same number of channels)
+                prev_bgr = cv2.cvtColor(self.prev_gray, cv2.COLOR_GRAY2BGR)
+                
+                # Draw all feature matches in blue
+                # This shows every correspondence found by the feature matcher before RANSAC filtering
+                debug_img = cv2.drawMatches(
+                    prev_bgr, self.prev_kp,              # Previous frame and its keypoints (left side)
+                    current_image, current_kp,           # Current frame and its keypoints (right side)  
+                    matches, None,                       # Matches to draw, no existing image to overlay
+                    matchColor=(255, 0, 0),              # Blue color for all matches
+                    singlePointColor=(0, 255, 255),      # Yellow for unmatched keypoints
+                    flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS  # Don't draw unmatched points
+                )
+                
+                # Overlay inlier matches in green (only the matches that passed RANSAC)
+                # This shows which correspondences are geometrically consistent with camera motion
+                if mask is not None and len(matches) > 0:
+                    # Filter matches to keep only the inliers based on RANSAC mask
+                    inlier_matches = [m for i, m in enumerate(matches) if i < len(mask) and mask[i] == 1]
+                    
+                    if len(inlier_matches) > 0:
+                        # Draw inlier matches in green over the existing image
+                        debug_img = cv2.drawMatches(
+                            prev_bgr, self.prev_kp,
+                            current_image, current_kp,
+                            inlier_matches, debug_img,       # Overlay on existing debug_img
+                            matchColor=(0, 255, 0),          # Green color for inliers
+                            singlePointColor=None,           # Don't change single point color
+                            flags=cv2.DrawMatchesFlags_DRAW_OVER_OUTIMG | cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+                        )
+                
+                # Add text overlay with match statistics for real-time monitoring
+                # This helps assess the quality of feature tracking and parameter tuning
+                inlier_count = np.sum(mask) if mask is not None else 0
+                total_matches = len(matches)
+                inlier_ratio = inlier_count / total_matches if total_matches > 0 else 0.0
+                
+                # Format statistics text with match counts and inlier percentage
+                stats_text = f"Matches: {total_matches}, Inliers: {inlier_count} ({inlier_ratio:.1%})"
+                
+                # Add white text with black outline for visibility on any background
+                cv2.putText(debug_img, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.8, (0, 0, 0), 3)  # Black outline
+                cv2.putText(debug_img, stats_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.8, (255, 255, 255), 2)  # White text
+                
+                # Add frame number or timestamp for debugging sequences
+                frame_text = f"Frame: {self.get_clock().now().nanoseconds // 1000000}"  # Milliseconds
+                cv2.putText(debug_img, frame_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.6, (0, 0, 0), 3)  # Black outline
+                cv2.putText(debug_img, frame_text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.6, (255, 255, 255), 2)  # White text
+                
+                # Convert the debug image back to ROS Image message format and publish
+                debug_msg = self.bridge.cv2_to_imgmsg(debug_img, "bgr8")
+                debug_msg.header.stamp = self.get_clock().now().to_msg()
+                debug_msg.header.frame_id = "camera_link"
+                self.debug_pub.publish(debug_msg)
+                
+        except Exception as e:
+            # Log warnings for debug visualization errors without crashing the main VO pipeline
+            # Debug visualization should never interfere with the core odometry functionality
+            self.get_logger().warn(f'Debug visualization error: {e}')
 
 
 def main(args=None):

@@ -238,6 +238,32 @@ def generate_launch_description():
             #
             # Monitoring tip: Watch the debug logs for "RANSAC outlier rejection" messages
             # to see typical inlier counts in your environment and adjust accordingly.
+            #
+            # 10. DEBUG VISUALIZATION
+            #     - This parameter enables/disables the debug visualization feature that shows
+            #       feature matches and RANSAC inliers in real-time.
+            #     - When enabled, publishes a debug image on `/visual_odo/debug_image` topic
+            #       showing side-by-side previous and current frames with matches drawn as lines.
+            #
+            # What the visualization shows:
+            # ----------------------------
+            # - **Blue lines**: All feature matches found by the descriptor matching
+            # - **Green lines**: Inlier matches that passed RANSAC geometric verification
+            # - **Text overlay**: Statistics showing total matches, inliers, and success rate
+            # - **Side-by-side layout**: Previous frame (left) and current frame (right)
+            #
+            # When to use:
+            # -----------
+            # - **Development/Tuning**: Enable to see how parameter changes affect matching
+            # - **Debugging**: Identify issues like poor feature distribution or bad matches
+            # - **Quality Assessment**: Monitor match quality and inlier ratios in real-time
+            # - **Production**: Disable to save CPU and bandwidth (no visualization needed)
+            #
+            # Performance impact:
+            # ------------------
+            # - **Minimal when disabled**: No computational overhead if set to False
+            # - **Moderate when enabled**: Additional image processing and publishing
+            # - **Network usage**: Publishes large debug images (consider in bandwidth-limited systems)
 
             parameters=[
                 {'focal': 800.0},        # Focal length in pixels
@@ -249,7 +275,8 @@ def generate_launch_description():
                 {'ransac_thresh': 1.0},  # RANSAC threshold
                 {'max_good_matches': 50}, # Maximum number of good matches
                 {'ratio_thresh': 0.75},  # Lowe's ratio test threshold for kNN matching
-                {'min_inliers': 5}       # Minimum RANSAC inliers for pose estimation
+                {'min_inliers': 5},      # Minimum RANSAC inliers for pose estimation
+                {'enable_debug_viz': True}, # Enable debug visualization (set False for production)
             ]
         ),
     ])
