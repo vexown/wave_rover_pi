@@ -15,7 +15,10 @@ source "${ROS2_WS_DIR}/install/setup.bash"
 # This command opens a new tab in GNOME Terminal to run the ROS2 visual odometry node in isolation.
 # After launching, 'exec bash' keeps the terminal tab open, allowing for interactive commands or monitoring,
 # and prevents the tab from closing immediately after the launch completes.
-gnome-terminal --tab -- bash -c "ros2 launch visual_odo simple_vo.launch.py; exec bash"
+# Simple Visual Odometry (simple_vo.launch.py) - For development, testing, or when IMU isn't available
+# gnome-terminal --tab -- bash -c "ros2 launch visual_odo simple_vo.launch.py; exec bash" 
+# Sensor Fusion Visual-Inertial Odometry (sensor_fusion_vo.launch.py) - Complete system: Visual odometry + IMU + EKF sensor fusion
+gnome-terminal --tab -- bash -c "ros2 launch visual_odo sensor_fusion_vo.launch.py; exec bash"
 
 # Node #2 - camera_feed_subscriber
 # [disabled for now] gnome-terminal --tab -- bash -c "ros2 run camera_feed_subscriber image_subscriber; exec bash"
