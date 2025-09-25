@@ -52,6 +52,38 @@ def generate_launch_description():
         ),
         
         # Extended Kalman Filter for sensor fusion
+        #
+        # What is EKF?
+        # ============
+        # Think of EKF as a "smart data combiner" that takes multiple imperfect sensor readings
+        # and produces a single, more accurate estimate of where your robot is and how it's moving.
+        #
+        # Why do we need it here?
+        # =======================
+        # Our robot has two main sensors telling us about position/orientation:
+        # 1. CAMERA (visual odometry) - Good at detecting movement but drifts over time and has no absolute reference
+        # 2. IMU (gyroscope/accelerometer) - Good at detecting rotation and short-term changes but also drifts
+        #
+        # Each sensor has different strengths and weaknesses:
+        # - Camera: Accurate for short distances but accumulates errors over time ("drift")
+        # - IMU: Great for detecting quick rotations but terrible for long-term position tracking
+        #
+        # How does EKF help?
+        # ==================
+        # Instead of just picking one sensor or averaging them, EKF is smart about it:
+        # - When the camera says "we moved forward 10cm" and IMU says "we rotated 5 degrees", 
+        #   EKF combines these intelligently based on how much it trusts each sensor
+        # - If camera data becomes unreliable (poor lighting, motion blur), EKF relies more on IMU
+        # - If IMU starts drifting, EKF trusts the camera more for position
+        # - The result is smoother, more accurate robot pose estimation than either sensor alone
+        #
+        # Real-world benefits for our robot:
+        # ==================================
+        # - Better navigation in challenging conditions (shadows, bright light, fast turns)
+        # - Reduced "jumping" or erratic position estimates in visualization
+        # - More stable autonomous driving behavior
+        # - Backup sensing when one sensor temporarily fails
+        #
         Node(
             package='robot_localization',
             executable='ekf_node',
