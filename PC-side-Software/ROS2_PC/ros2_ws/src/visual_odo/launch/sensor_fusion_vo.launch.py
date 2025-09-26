@@ -85,6 +85,8 @@ def generate_launch_description():
         # - Backup sensing when one sensor temporarily fails
         #
         Node(
+            # robot_localization is a state estimation package that fuses data from multiple sensors (e.g., IMU, GPS, wheel odometry, visual odometry) 
+            # to estimate a robot’s pose (position and orientation) and velocity over time.
             package='robot_localization',
             executable='ekf_node',
             name='ekf_se_odom',
