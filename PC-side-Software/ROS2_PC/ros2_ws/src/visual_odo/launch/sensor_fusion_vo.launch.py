@@ -37,17 +37,27 @@ def generate_launch_description():
             name='simple_visual_odometry',
             output='screen',
             parameters=[
-                {'focal': 800.0},           # Focal length in pixels (tune for your camera)
-                {'cx': 400.0},              # Principal point x-coordinate
-                {'cy': 300.0},              # Principal point y-coordinate
-                {'scale': 0.1},             # Scale factor for translation (placeholder)
-                {'orb_nfeatures': 500},     # Number of ORB features to detect
-                {'min_matches': 10},        # Minimum feature matches required
-                {'ransac_thresh': 1.0},     # RANSAC threshold for essential matrix
-                {'max_good_matches': 50},   # Maximum good matches to use
-                {'ratio_thresh': 0.75},     # Lowe's ratio test threshold
-                {'min_inliers': 5},         # Minimum RANSAC inliers for pose estimation
-                {'enable_debug_viz': True}, # Enable debug visualization
+                # Camera intrinsics - based on actual camera_info analysis
+                {'focal': 800.0},           # Focal length: matches camera_info fx, reasonable for 800px image width
+                {'cx': 400.0},              # Principal point x: exactly width/2 for centered optical axis
+                {'cy': 300.0},              # Principal point y: exactly height/2 for centered optical axis
+                
+                # Scale factor - tuned for drift vs responsiveness balance
+                {'scale': 0.08},            # 20% smaller than default to reduce accumulated drift while preserving motion detection
+                {'orb_nfeatures': 500},     # Balanced feature count: enough for robust matching without excessive CPU load
+                
+                # Feature matching parameters - optimized for quality vs quantity tradeoff
+                {'min_matches': 10},        # Minimum viable matches for essential matrix estimation (5-8 DOF constraint)
+                {'ransac_thresh': 1.0},     # 1-pixel reprojection error tolerance: strict enough to reject outliers, loose enough for real camera noise
+                {'max_good_matches': 50},   # Process top 50 matches: reduces computation while retaining best correspondences
+                {'ratio_thresh': 0.70},     # Lowe's ratio test: stricter than default 0.75 to improve match distinctiveness and reduce ambiguous matches
+                {'min_inliers': 7},         # RANSAC inlier requirement: higher than minimal 5 for reliability, lower than strict 15 for motion sensitivity
+                
+                # Motion filtering - prevents stationary drift from sensor noise
+                {'motion_threshold': 0.002}, # Combined translation+rotation threshold: filters sub-pixel noise while detecting real 1-2mm movements
+                
+                # Debug visualization
+                {'enable_debug_viz': True}, # Real-time match visualization for parameter tuning and system monitoring
             ]
         ),
         

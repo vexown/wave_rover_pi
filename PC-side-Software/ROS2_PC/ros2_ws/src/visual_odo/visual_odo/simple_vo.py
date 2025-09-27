@@ -114,6 +114,7 @@ class SimpleVisualOdometry(Node):
             ('ratio_thresh', 0.75),    # Lowe's ratio test threshold for kNN matching
             ('min_inliers', 5),        # Minimum number of RANSAC inliers for pose estimation
             ('enable_debug_viz', False), # Enable debug visualization
+            ('motion_threshold', 0.002), # Minimum motion magnitude to update pose (prevents stationary drift)
         ])
 
         # Retrieve parameter values and set instance variables
@@ -127,6 +128,7 @@ class SimpleVisualOdometry(Node):
         self.ratio_thresh = self.get_parameter('ratio_thresh').value
         self.min_inliers = self.get_parameter('min_inliers').value
         self.debug_viz_enabled = self.get_parameter('enable_debug_viz').value
+        self.motion_threshold = self.get_parameter('motion_threshold').value
 
         # Debug visualization publisher (only create if enabled)
         if self.debug_viz_enabled:
@@ -540,6 +542,21 @@ class SimpleVisualOdometry(Node):
                                 # into the odometry/world frame efficiently.
                                 cos_theta = math.cos(self.theta)
                                 sin_theta = math.sin(self.theta)
+
+                                # Check if motion is above threshold to prevent stationary drift
+                                motion_magnitude = math.sqrt(dx*dx + dz*dz) + abs(dtheta)
+                                
+                                if motion_magnitude < self.motion_threshold:
+                                    # Motion is too small - likely noise when stationary
+                                    # Skip pose update but still save frame data for next iteration
+                                    self.get_logger().debug(f'Motion below threshold ({motion_magnitude:.4f} < {self.motion_threshold:.4f}), skipping pose update')
+                                    self.prev_gray = gray.copy()
+                                    self.prev_kp = kp
+                                    self.prev_des = des
+                                    return
+
+                                # Motion is significant - proceed with pose update
+                                self.get_logger().debug(f'Motion detected ({motion_magnitude:.4f}), updating pose: dx={dx:.3f}, dz={dz:.3f}, dtheta={dtheta:.3f}')
 
                                 # Now we use the movements we calculated (dx for side-to-side, dz for forward/back, and dtheta for turning)
                                 # to update the robot's overall position and direction (self.x, self.y, self.theta).
