@@ -50,8 +50,8 @@ def generate_launch_description():
                 {'min_matches': 10},        # Minimum viable matches for essential matrix estimation (5-8 DOF constraint)
                 {'ransac_thresh': 1.0},     # 1-pixel reprojection error tolerance: strict enough to reject outliers, loose enough for real camera noise
                 {'max_good_matches': 50},   # Process top 50 matches: reduces computation while retaining best correspondences
-                {'ratio_thresh': 0.70},     # Lowe's ratio test: stricter than default 0.75 to improve match distinctiveness and reduce ambiguous matches
-                {'min_inliers': 7},         # RANSAC inlier requirement: higher than minimal 5 for reliability, lower than strict 15 for motion sensitivity
+                {'ratio_thresh': 0.60},     # Lowe's ratio test: stricter than default 0.75 to improve match distinctiveness and reduce ambiguous matches
+                {'min_inliers': 9},         # RANSAC inlier requirement: higher than minimal 5 for reliability, lower than strict 15 for motion sensitivity
                 
                 # Motion filtering - prevents stationary drift from sensor noise
                 {'motion_threshold': 0.002}, # Combined translation+rotation threshold: filters sub-pixel noise while detecting real 1-2mm movements
