@@ -59,7 +59,7 @@ class RPiCamPublisher(Node):
         self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', sensor_qos)
 
         # Set camera calibration file path
-        self.camera_info_file = os.path.expanduser('./camera_calibration.yaml')
+        self.camera_info_file = os.path.expanduser('~/ros2_ws/camera_ros_config/rpi_camera_calibration.yaml')
 
         # Load camera calibration message - contains intrinsic camera parameters
         # This tells subscribers the camera's focal length, distortion, etc. for 3D vision tasks
