@@ -37,10 +37,10 @@ def generate_launch_description():
             name='simple_visual_odometry',
             output='screen',
             parameters=[
-                # Camera intrinsics - based on actual camera_info analysis
-                {'focal': 800.0},           # Focal length: matches camera_info fx, reasonable for 800px image width
-                {'cx': 400.0},              # Principal point x: exactly width/2 for centered optical axis
-                {'cy': 300.0},              # Principal point y: exactly height/2 for centered optical axis
+                # Camera intrinsics - CALIBRATED VALUES from camera_calibration.yaml
+                {'focal': 1204.0},          # fx from camera matrix: 1203.78 ≈ 1204
+                {'cx': 365.0},              # cx from camera matrix: 364.80 ≈ 365  
+                {'cy': 291.0},              # cy from camera matrix: 290.55 ≈ 291
                 
                 # Scale factor - tuned for drift vs responsiveness balance
                 {'scale': 0.08},            # 20% smaller than default to reduce accumulated drift while preserving motion detection
