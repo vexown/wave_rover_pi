@@ -2,12 +2,14 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.srv import SetCameraInfo
 from sensor_msgs.msg import CameraInfo, CompressedImage
 import subprocess
 import os
 import time
 import signal
 from threading import Thread
+import yaml
 
 # Global shutdown coordination flag - allows clean termination across threads
 # Set to True when SIGINT (Ctrl+C) or SIGTERM (kill command) received to signal all components to stop
@@ -56,9 +58,10 @@ class RPiCamPublisher(Node):
         self.compressed_pub = self.create_publisher(CompressedImage, '/camera/image_raw/compressed', sensor_qos)
         self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', sensor_qos)
 
-        # Create camera calibration message - contains intrinsic camera parameters
+        # Load camera calibration message - contains intrinsic camera parameters
         # This tells subscribers the camera's focal length, distortion, etc. for 3D vision tasks
-        self.camera_info_msg = self.create_camera_info()
+        # Loads from YAML file if calibrated, otherwise uses reasonable defaults
+        self.camera_info_msg = self.load_camera_info()
 
         # Initialize camera streaming state variables
         self.running = True                            # Main control flag - set to False to stop everything
@@ -81,6 +84,16 @@ class RPiCamPublisher(Node):
         # Initialize threading and process tracking variables
         self._stderr_thread = None                     # Background thread for reading GStreamer error messages
         self.pipeline_start_time = None                # When GStreamer pipeline was started (for startup timeout)
+
+        # Add camera info service for calibration
+        self.set_camera_info_srv = self.create_service(
+            SetCameraInfo, 
+            'set_camera_info', 
+            self.set_camera_info_callback
+        )
+        
+        # Set camera calibration file path
+        self.camera_info_file = os.path.expanduser('~/camera_calibration.yaml')
 
         # Start the camera streaming pipeline - this launches GStreamer and begins frame capture
         self.start_camera()
@@ -422,6 +435,81 @@ class RPiCamPublisher(Node):
             super().destroy_node()
         except Exception as e:
             print(f"Warning: Error in parent destroy_node: {e}")
+            
+    def load_camera_info(self):
+        """Load camera info from file or use defaults"""
+        if os.path.exists(self.camera_info_file):
+            try:
+                with open(self.camera_info_file, 'r') as f:
+                    data = yaml.safe_load(f)
+                    msg = CameraInfo()
+                    msg.header.frame_id = 'camera_link'
+                    msg.height = data.get('image_height', self.height)
+                    msg.width = data.get('image_width', self.width)
+                    msg.distortion_model = data.get('distortion_model', 'plumb_bob')
+                    msg.d = data.get('distortion_coefficients', {}).get('data', [0.0, 0.0, 0.0, 0.0, 0.0])
+                    msg.k = data.get('camera_matrix', {}).get('data', [self.width, 0.0, self.width/2, 0.0, self.height, self.height/2, 0.0, 0.0, 1.0])
+                    msg.r = data.get('rectification_matrix', {}).get('data', [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+                    msg.p = data.get('projection_matrix', {}).get('data', [self.width, 0.0, self.width/2, 0.0, 0.0, self.height, self.height/2, 0.0, 0.0, 0.0, 1.0, 0.0])
+                    self.get_logger().info(f"Loaded camera calibration from {self.camera_info_file}")
+                    return msg
+            except Exception as e:
+                self.get_logger().warning(f"Failed to load camera calibration: {e}, using defaults")
+        else:
+            self.get_logger().info("No camera calibration file found, using defaults")
+        
+        # Default camera info (reasonable estimates for 800x600 camera)
+        msg = CameraInfo()
+        msg.header.frame_id = 'camera_link'
+        msg.height = self.height
+        msg.width = self.width
+        msg.distortion_model = 'plumb_bob'
+        msg.d = [0.0, 0.0, 0.0, 0.0, 0.0]  # No distortion correction (will be calibrated)
+        msg.k = [self.width, 0.0, self.width/2, 0.0, self.height, self.height/2, 0.0, 0.0, 1.0]  # Basic pinhole model
+        msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]  # No rectification
+        msg.p = [self.width, 0.0, self.width/2, 0.0, 0.0, self.height, self.height/2, 0.0, 0.0, 0.0, 1.0, 0.0]  # Projection matrix
+        return msg
+    
+    def set_camera_info_callback(self, request, response):
+        """Handle camera info updates from calibration tool"""
+        self.camera_info_msg = request.camera_info
+        self.save_camera_info(self.camera_info_msg)
+        response.success = True
+        response.status_message = "Camera calibration saved"
+        self.get_logger().info("Camera calibration updated and saved")
+        return response
+    
+    def save_camera_info(self, camera_info):
+        """Save camera info to YAML file"""
+        data = {
+            'image_width': camera_info.width,
+            'image_height': camera_info.height,
+            'camera_name': 'rpi_camera',
+            'camera_matrix': {
+                'rows': 3,
+                'cols': 3,
+                'data': camera_info.k
+            },
+            'distortion_model': camera_info.distortion_model,
+            'distortion_coefficients': {
+                'rows': 1,
+                'cols': 5,
+                'data': camera_info.d
+            },
+            'rectification_matrix': {
+                'rows': 3,
+                'cols': 3,
+                'data': camera_info.r
+            },
+            'projection_matrix': {
+                'rows': 3,
+                'cols': 4,
+                'data': camera_info.p
+            }
+        }
+        
+        with open(self.camera_info_file, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False)
 
 def main(args=None):
     """Main entry point for the RPi Camera Publisher ROS2 node.
