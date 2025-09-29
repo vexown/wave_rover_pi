@@ -58,6 +58,9 @@ class RPiCamPublisher(Node):
         self.compressed_pub = self.create_publisher(CompressedImage, '/camera/image_raw/compressed', sensor_qos)
         self.camera_info_pub = self.create_publisher(CameraInfo, '/camera/camera_info', sensor_qos)
 
+        # Set camera calibration file path
+        self.camera_info_file = os.path.expanduser('~/camera_calibration.yaml')
+
         # Load camera calibration message - contains intrinsic camera parameters
         # This tells subscribers the camera's focal length, distortion, etc. for 3D vision tasks
         # Loads from YAML file if calibrated, otherwise uses reasonable defaults
@@ -92,9 +95,6 @@ class RPiCamPublisher(Node):
             self.set_camera_info_callback
         )
         
-        # Set camera calibration file path
-        self.camera_info_file = os.path.expanduser('~/camera_calibration.yaml')
-
         # Start the camera streaming pipeline - this launches GStreamer and begins frame capture
         self.start_camera()
 
