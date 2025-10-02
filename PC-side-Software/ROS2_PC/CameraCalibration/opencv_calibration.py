@@ -1,6 +1,87 @@
 #!/usr/bin/env python3
 """
 OpenCV Camera Calibration using your existing ROS camera stream
+
+=== WHAT IS CAMERA CALIBRATION? ===
+Camera calibration is the process of determining the internal geometric and optical characteristics
+(intrinsic parameters) and external position/orientation (extrinsic parameters) of a camera. Think
+of it as measuring the "personality" of your specific camera lens and sensor combination.
+
+Real-world cameras differ from the idealized pinhole camera model due to:
+- Lens distortion (radial and tangential warping)
+- Manufacturing variations in lens elements
+- Sensor positioning and alignment
+- Focal length variations
+
+The intrinsic parameters we estimate include:
+- Focal length (fx, fy): How much the lens "zooms" in x and y directions
+- Principal point (cx, cy): Where the optical axis intersects the image plane (ideally at center)
+- Distortion coefficients: How the lens warps straight lines (barrel/pincushion effects)
+
+=== WHY IS CALIBRATION CRITICAL FOR VISUAL ODOMETRY? ===
+Visual odometry (VO) estimates camera motion by tracking features between frames. Accurate calibration
+is essential because:
+
+1. GEOMETRIC ACCURACY: VO algorithms assume they know how 3D world points project onto 2D images.
+   Without calibration, your math is working with the wrong projection model, leading to:
+   - Incorrect distance estimates (scale errors)
+   - Accumulated drift and trajectory errors
+   - Failed triangulation of 3D points
+
+2. DISTORTION CORRECTION: Lens distortion makes straight lines appear curved. This breaks assumptions
+   in feature matching and epipolar geometry. Undistorted images let algorithms work with geometrically
+   correct data.
+
+3. DEPTH/SCALE RECOVERY: For monocular VO, calibration helps recover metric scale when combined with
+   known measurements. For stereo VO, it's essential for accurate disparity-to-depth conversion.
+
+4. FEATURE MATCHING: Distortion causes features to appear in wrong locations. After undistortion,
+   feature correspondences become more reliable and epipolar constraints hold true.
+
+Without calibration, your robot might think it moved 1 meter when it actually moved 1.2 meters, or
+estimate incorrect rotation angles - catastrophic for autonomous navigation!
+
+=== HOW DOES CALIBRATION WORK? ===
+Calibration uses a known 3D pattern (our checkerboard) to establish point correspondences:
+
+1. KNOWN 3D GEOMETRY: We know the real-world positions of checkerboard corners (e.g., corner A is
+   at (0,0,0), corner B is at (25mm,0,0), etc.)
+
+2. OBSERVED 2D PROJECTIONS: We detect where these corners appear in the camera image (pixel coords)
+
+3. MATHEMATICAL OPTIMIZATION: Given many such 3D↔2D correspondences from multiple viewpoints, we
+   solve for camera parameters that best explain how 3D points project to 2D pixels. This is a
+   non-linear optimization minimizing reprojection error.
+
+4. MULTIPLE VIEWS: Using different angles/distances ensures we sample various depths and image regions,
+   making the solution robust and avoiding overfitting to one configuration.
+
+The calibration process essentially asks: "What camera parameters would cause these 3D corners to
+appear at exactly these pixel locations?" and finds the best-fit answer.
+
+=== WHY USE A CHECKERBOARD PATTERN? ===
+Checkerboards are the gold standard for calibration because:
+
+1. SUB-PIXEL CORNER DETECTION: Black-white transitions create sharp intensity gradients. Corner
+   detection algorithms can locate checkerboard corners to sub-pixel accuracy (~0.1 pixel), far
+   better than circles or other patterns.
+
+2. UNAMBIGUOUS ORIENTATION: The asymmetric grid (e.g., 7x9) has a unique orientation, preventing
+   180° ambiguities. The algorithm always knows which corner is which.
+
+3. PLANAR SIMPLICITY: All corners lie in one plane, simplifying the math (we can set Z=0 for all
+   pattern points in the pattern's coordinate system).
+
+4. ROBUST DETECTION: High contrast and regular structure make detection reliable across lighting
+   conditions, viewing angles, and partial occlusions.
+
+5. CORNER STABILITY: Unlike edge-based patterns, corner features are stable under perspective
+   distortion and provide strong constraints for optimization.
+
+Alternative patterns (circles, ArUco markers) exist but checkerboards remain preferred for
+their precision and reliability in calibration tasks.
+
+=== USAGE INSTRUCTIONS ===
 # First print-out a 250mm x 200m checkerboard with 7 rows 9 columns and 25mm squares.
 # https://calib.io/pages/camera-calibration-pattern-generator?srsltid=AfmBOoqFdbxj9zzbAa_V9Pem9-nJ1KIuPBrhBbDZQLspMJFW69y3F3B0
 #
