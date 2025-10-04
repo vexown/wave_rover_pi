@@ -31,6 +31,8 @@ def generate_launch_description():
         ),
         
         # Visual odometry node with all improvements
+        # TODO - There is still significant drift in a no-motion, looking at static scene scenario, making the parameters stricter did not help at all,
+        # perhaps this is an issue coming from the IMU integration or the EKF settings and not the VO itself, investigate further.
         Node(
             package='visual_odo',
             executable='simple_vo',
