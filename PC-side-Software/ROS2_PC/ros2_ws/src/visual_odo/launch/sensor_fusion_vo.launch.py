@@ -30,9 +30,7 @@ def generate_launch_description():
             output='screen'
         ),
         
-        # Visual odometry node with all improvements
-        # TODO - There is still significant drift in a no-motion, looking at static scene scenario, making the parameters stricter did not help at all,
-        # perhaps this is an issue coming from the IMU integration or the EKF settings and not the VO itself, investigate further.
+        # Visual odometry node with enhanced stationary drift prevention
         Node(
             package='visual_odo',
             executable='simple_vo',
@@ -44,21 +42,23 @@ def generate_launch_description():
                 {'cx': 365.0},              # cx from camera matrix: 364.80 ≈ 365  
                 {'cy': 291.0},              # cy from camera matrix: 290.55 ≈ 291
                 
-                # Scale factor - tuned for drift vs responsiveness balance
-                {'scale': 0.08},            # 20% smaller than default to reduce accumulated drift while preserving motion detection
+                # Scale factor - reduced to minimize noise amplification
+                {'scale': 0.05},            # Reduced from 0.08 - less amplification of noise
                 {'orb_nfeatures': 500},     # Balanced feature count: enough for robust matching without excessive CPU load
                 
-                # Feature matching parameters - optimized for quality vs quantity tradeoff
-                {'min_matches': 10},        # Minimum viable matches for essential matrix estimation (5-8 DOF constraint)
-                {'ransac_thresh': 1.0},     # 1-pixel reprojection error tolerance: strict enough to reject outliers, loose enough for real camera noise
+                # Feature matching parameters - stricter for better quality
+                {'min_matches': 15},        # Increased from 10 - more matches required for reliability
+                {'ransac_thresh': 0.8},     # Reduced from 1.0 - stricter geometric consistency
                 {'max_good_matches': 50},   # Process top 50 matches: reduces computation while retaining best correspondences
                 {'ratio_thresh': 0.60},     # Lowe's ratio test: stricter than default 0.75 to improve match distinctiveness and reduce ambiguous matches
                 {'min_inliers': 9},         # RANSAC inlier requirement: higher than minimal 5 for reliability, lower than strict 15 for motion sensitivity
                 
-                # Motion filtering - prevents stationary drift from sensor noise
-                {'motion_threshold': 0.002}, # Combined translation+rotation threshold: filters sub-pixel noise while detecting real 1-2mm movements
+                # ENHANCED MOTION FILTERING - multi-layer drift prevention
+                {'motion_threshold': 0.005},      # Increased from 0.002 - 2.5x stricter translation threshold
+                {'min_motion_inliers': 12},       # NEW: Require more inliers to accept motion (was implicit at min_inliers)
+                {'rotation_threshold': 0.015},    # NEW: Separate rotation threshold (0.86 degrees minimum)
                 
-                # Debug visualization
+                # Debug visualization and diagnostics
                 {'enable_debug_viz': True}, # Real-time match visualization for parameter tuning and system monitoring
             ]
         ),

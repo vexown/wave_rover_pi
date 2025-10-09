@@ -115,6 +115,8 @@ class SimpleVisualOdometry(Node):
             ('min_inliers', 5),        # Minimum number of RANSAC inliers for pose estimation
             ('enable_debug_viz', False), # Enable debug visualization
             ('motion_threshold', 0.002), # Minimum motion magnitude to update pose (prevents stationary drift)
+            ('min_motion_inliers', 8),   # Minimum inliers required to consider motion valid
+            ('rotation_threshold', 0.01), # Minimum rotation magnitude (radians) to update pose
         ])
 
         # Retrieve parameter values and set instance variables
@@ -129,10 +131,23 @@ class SimpleVisualOdometry(Node):
         self.min_inliers = self.get_parameter('min_inliers').value
         self.debug_viz_enabled = self.get_parameter('enable_debug_viz').value
         self.motion_threshold = self.get_parameter('motion_threshold').value
+        self.min_motion_inliers = self.get_parameter('min_motion_inliers').value
+        self.rotation_threshold = self.get_parameter('rotation_threshold').value
 
-        # Debug visualization publisher (only create if enabled)
+        # Motion history for temporal filtering (detect consistent motion vs noise)
+        self.motion_history = []
+        self.history_size = 5
+        
+        # Debugging statistics tracking
+        self.frame_count = 0
+        self.filtered_frames = 0
+        self.motion_frames = 0
+
+        # Debug visualization and statistics (only create if enabled)
         if self.debug_viz_enabled:
             self.debug_pub = self.create_publisher(Image, '/visual_odo/debug_image', 10)
+            # Create timer for detailed debugging diagnostics
+            self.create_timer(5.0, self.publish_debug_statistics)
 
         # ORB feature detector
         # The 'nfeatures' parameter sets the maximum number of keypoints ORB will detect in each image frame. 
@@ -220,6 +235,7 @@ class SimpleVisualOdometry(Node):
         approaches (scale, outlier filtering) and should be improved for real
         deployments.
         """
+        self.frame_count += 1
         try:
             # Convert incoming ROS Image message to an OpenCV image.
             #
@@ -481,9 +497,26 @@ class SimpleVisualOdometry(Node):
                                                                    focal=self.focal_length,
                                                                    pp=self.pp)
                                 
-                                # Log additional pose recovery statistics if desired
+                                # Count points that passed chirality check
                                 pose_inliers = np.sum(pose_mask) if pose_mask is not None else inlier_count
-                                self.get_logger().debug(f'Pose recovery: {pose_inliers}/{inlier_count} points passed cheirality check')
+                                self.get_logger().debug(f'Pose recovery: {pose_inliers}/{inlier_count} points passed chirality check')
+
+                                # ========================================================================
+                                # ENHANCED STATIONARY DETECTION: Check pose inliers
+                                # ========================================================================
+                                # Additional check: Require minimum inliers for motion detection
+                                # Even if RANSAC finds inliers, if too few pass the cheirality check,
+                                # the motion estimate may be unreliable (likely noise, not real motion)
+                                if pose_inliers < self.min_motion_inliers:
+                                    self.get_logger().debug(
+                                        f'Insufficient pose inliers ({pose_inliers} < {self.min_motion_inliers}), '
+                                        f'treating as stationary'
+                                    )
+                                    self.filtered_frames += 1
+                                    self.prev_gray = gray.copy()
+                                    self.prev_kp = kp
+                                    self.prev_des = des
+                                    return
                                 
                                 # ========================================================================
                                 # DEBUG VISUALIZATION: Show feature matches and inliers
@@ -543,20 +576,65 @@ class SimpleVisualOdometry(Node):
                                 cos_theta = math.cos(self.theta)
                                 sin_theta = math.sin(self.theta)
 
-                                # Check if motion is above threshold to prevent stationary drift
-                                motion_magnitude = math.sqrt(dx*dx + dz*dz) + abs(dtheta)
+                                # ========================================================================
+                                # ENHANCED MOTION DETECTION: Multi-layer filtering
+                                # ========================================================================
+                                # 
+                                # 1. Check translation magnitude separately from rotation
+                                translation_magnitude = math.sqrt(dx*dx + dz*dz)
                                 
-                                if motion_magnitude < self.motion_threshold:
-                                    # Motion is too small - likely noise when stationary
-                                    # Skip pose update but still save frame data for next iteration
-                                    self.get_logger().debug(f'Motion below threshold ({motion_magnitude:.4f} < {self.motion_threshold:.4f}), skipping pose update')
+                                # 2. Check rotation magnitude separately (more sensitive threshold)
+                                rotation_magnitude = abs(dtheta)
+                                
+                                # 3. Combined check with separate thresholds
+                                is_translating = translation_magnitude >= self.motion_threshold
+                                is_rotating = rotation_magnitude >= self.rotation_threshold
+                                
+                                # 4. Temporal consistency check (motion should persist across frames)
+                                # Build motion history for noise filtering
+                                self.motion_history.append({
+                                    'translation': translation_magnitude,
+                                    'rotation': rotation_magnitude,
+                                    'inliers': pose_inliers
+                                })
+                                
+                                # Keep only recent history
+                                if len(self.motion_history) > self.history_size:
+                                    self.motion_history.pop(0)
+                                
+                                # Check if motion is consistent over recent frames
+                                # Motion should appear in multiple consecutive frames if it's real
+                                recent_motions = len([h for h in self.motion_history 
+                                                     if h['translation'] >= self.motion_threshold or 
+                                                        h['rotation'] >= self.rotation_threshold])
+                                
+                                # Require motion in at least 2 of last 5 frames for small movements
+                                # This filters out single-frame noise spikes
+                                motion_consistent = recent_motions >= 2 if len(self.motion_history) >= 3 else True
+                                
+                                # Final decision: proceed only if motion detected AND consistent
+                                if not (is_translating or is_rotating) or not motion_consistent:
+                                    # Motion is too small or inconsistent - likely noise
+                                    self.get_logger().debug(
+                                        f'Motion filtered: trans={translation_magnitude:.4f} (thresh={self.motion_threshold:.4f}), '
+                                        f'rot={rotation_magnitude:.4f} (thresh={self.rotation_threshold:.4f}), '
+                                        f'consistent={motion_consistent} ({recent_motions}/{len(self.motion_history)}), '
+                                        f'inliers={pose_inliers}'
+                                    )
+                                    self.filtered_frames += 1
                                     self.prev_gray = gray.copy()
                                     self.prev_kp = kp
                                     self.prev_des = des
                                     return
 
-                                # Motion is significant - proceed with pose update
-                                self.get_logger().debug(f'Motion detected ({motion_magnitude:.4f}), updating pose: dx={dx:.3f}, dz={dz:.3f}, dtheta={dtheta:.3f}')
+                                # Motion is significant and consistent - proceed with pose update
+                                self.get_logger().debug(
+                                    f'Valid motion detected: trans={translation_magnitude:.4f}, '
+                                    f'rot={rotation_magnitude:.4f}, inliers={pose_inliers}, '
+                                    f'consistent={motion_consistent} ({recent_motions}/{len(self.motion_history)})'
+                                )
+                                
+                                self.motion_frames += 1
 
                                 # Now we use the movements we calculated (dx for side-to-side, dz for forward/back, and dtheta for turning)
                                 # to update the robot's overall position and direction (self.x, self.y, self.theta).
@@ -816,6 +894,75 @@ class SimpleVisualOdometry(Node):
             # Log warnings for debug visualization errors without crashing the main VO pipeline
             # Debug visualization should never interfere with the core odometry functionality
             self.get_logger().warn(f'Debug visualization error: {e}')
+
+    def publish_debug_statistics(self):
+        """
+        Periodic callback to publish comprehensive debugging statistics.
+        
+        This method provides detailed insights into the visual odometry system's behavior:
+        - Frame processing rates and filtering statistics
+        - Motion detection effectiveness 
+        - Parameter settings for troubleshooting
+        - Component identification (VO vs IMU vs EKF drift)
+        
+        Statistics are logged at INFO level every 5 seconds for monitoring and tuning.
+        """
+        if self.frame_count == 0:
+            return
+        
+        # Calculate filtering statistics
+        filter_ratio = (self.filtered_frames / self.frame_count) * 100 if self.frame_count > 0 else 0
+        motion_ratio = (self.motion_frames / self.frame_count) * 100 if self.frame_count > 0 else 0
+        
+        # Build comprehensive status report
+        status = [
+            "\n" + "="*70,
+            "VISUAL ODOMETRY DEBUG STATISTICS",
+            "="*70,
+            f"Frame Processing:",
+            f"  Total frames:        {self.frame_count}",
+            f"  Motion detected:     {self.motion_frames} ({motion_ratio:.1f}%)",
+            f"  Filtered (no motion): {self.filtered_frames} ({filter_ratio:.1f}%)",
+            f"",
+            f"Current Pose:",
+            f"  Position: x={self.x:.3f}m, y={self.y:.3f}m",
+            f"  Orientation: theta={math.degrees(self.theta):.1f}°",
+            f"",
+            f"Motion Detection Parameters:",
+            f"  Translation threshold: {self.motion_threshold:.4f}m",
+            f"  Rotation threshold:    {math.degrees(self.rotation_threshold):.2f}°",
+            f"  Min motion inliers:    {self.min_motion_inliers}",
+            f"  History size:          {self.history_size} frames",
+            f"",
+            f"Feature Detection:",
+            f"  ORB features:          {self.orb_nfeatures}",
+            f"  Min matches:           {self.min_matches}",
+            f"  Min inliers:           {self.min_inliers}",
+            f"  Ratio threshold:       {self.ratio_thresh}",
+            f"",
+            f"Drift Analysis Tips:",
+            f"  - High filter ratio (>80%) when stationary = good noise rejection",
+            f"  - Low filter ratio (<50%) when stationary = increase thresholds",
+            f"  - Motion detected when stationary = check camera stability",
+            f"  - Gradual drift over time = likely IMU integration or EKF tuning",
+            "="*70
+        ]
+        
+        # Log the complete status report
+        self.get_logger().info("\n".join(status))
+        
+        # Additional diagnostic: Check motion history for patterns
+        if len(self.motion_history) > 0:
+            avg_translation = sum(h['translation'] for h in self.motion_history) / len(self.motion_history)
+            avg_rotation = sum(h['rotation'] for h in self.motion_history) / len(self.motion_history)
+            avg_inliers = sum(h['inliers'] for h in self.motion_history) / len(self.motion_history)
+            
+            self.get_logger().info(
+                f"Recent motion history (last {len(self.motion_history)} frames):\n"
+                f"  Avg translation: {avg_translation:.4f}m\n"
+                f"  Avg rotation:    {math.degrees(avg_rotation):.2f}°\n"
+                f"  Avg inliers:     {avg_inliers:.1f}"
+            )
 
 
 def main(args=None):
