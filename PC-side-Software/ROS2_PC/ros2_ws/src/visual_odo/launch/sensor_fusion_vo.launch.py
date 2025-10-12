@@ -59,7 +59,7 @@ def generate_launch_description():
                 {'rotation_threshold': 0.015},    # NEW: Separate rotation threshold (0.86 degrees minimum)
                 
                 # Debug visualization and diagnostics
-                {'enable_debug_viz': True}, # Real-time match visualization for parameter tuning and system monitoring
+                {'enable_debug_viz': False}, # Real-time match visualization for parameter tuning and system monitoring
             ]
         ),
         
