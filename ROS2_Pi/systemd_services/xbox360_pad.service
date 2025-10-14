@@ -1,27 +1,18 @@
 # Note - before activating this service, blacklist the old xpad driver
 #
 # Create the blacklist file
-#   echo 'blacklist xpad' | sudo tee /etc/modprobe.d/xbox-blacklist.conf
+#   echo 'blacklist xpad' | sudo tee /etc/modprobe.d/xbox-blacklist.conf
 # Update the initial ramdisk (important for applying the change)
-#   sudo update-initramfs -u
+#   sudo update-initramfs -u
 
 [Unit]
 Description=Xbox 360 Wireless Controller Driver (xboxdrv)
-# The driver needs to load after udev has set up device files
 After=multi-user.target
 
 [Service]
-# We will run this as root to ensure it has full access to USB and uinput
 User=root
-# Type=simple is correct, as xboxdrv will run continuously.
 Type=simple
-# Execute the command with the necessary options
-# --daemon is ideal for systemd
-# --silent prevents log spam
-# --detach-kernel-driver is a safety net, but less necessary after blacklisting
-ExecStart=/usr/bin/xboxdrv --daemon --silent --detach-kernel-driver
-
-# Restart if the process fails (e.g., if the receiver is unplugged and plugged back in)
+ExecStart=/usr/bin/xboxdrv --silent --detach-kernel-driver
 Restart=always
 RestartSec=5
 StandardOutput=journal
