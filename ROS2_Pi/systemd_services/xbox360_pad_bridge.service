@@ -1,0 +1,20 @@
+[Unit]
+Description=Xbox Controller to UART Bridge
+# Ensure this service starts AFTER the xboxdrv service has created the input device
+After=xbox360_pad.service
+Requires=xbox360_pad.service
+
+[Service]
+# Run as your user, as the script is located in your home directory
+User=blankmcu
+Environment="HOME=/home/blankmcu"
+Type=simple
+# Execute the Python script
+ExecStart=/home/blankmcu/ros2_ws/controller_uart_bridge/controller_uart_bridge.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
