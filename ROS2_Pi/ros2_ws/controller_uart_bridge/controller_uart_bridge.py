@@ -50,9 +50,9 @@ def format_and_send(uart):
     
     try:
         uart.write(data_string.encode('utf-8'))
-        # print(f"Sent: {data_string.strip()}") # Uncomment for debugging
+        print(f"Sent: {data_string.strip()}") # Uncomment for debugging
     except Exception as e:
-        # print(f"Error writing to serial: {e}") # Uncomment for debugging
+        print(f"Error writing to serial: {e}") # Uncomment for debugging
         pass
         
 # Constants for joystick event reading
@@ -61,24 +61,69 @@ JS_EVENT_BUTTON = 0x01  # button pressed/released
 JS_EVENT_AXIS = 0x02    # joystick moved
 JS_EVENT_INIT = 0x80    # initial state of device
 
+def is_controller_connected(device_path):
+    """
+    Check if a controller is actually connected (not just the receiver).
+    Returns True if controller is powered on and responsive.
+    """
+    try:
+        # Try to open the device
+        test_fd = open(device_path, 'rb')
+        
+        # Try to get device name - this fails with errno 22 if no controller connected
+        buf = array.array('B', [0] * 64)
+        fcntl.ioctl(test_fd, JSIOCGNAME(len(buf)), buf)
+        name = buf.tobytes().rstrip(b'\x00').decode('utf8', errors='ignore')
+        
+        test_fd.close()
+        
+        # If we got a valid name, controller is connected
+        return len(name) > 0
+        
+    except OSError as e:
+        if e.errno == 22:  # Device exists but no controller connected
+            return False
+        # Other errors - assume not connected
+        return False
+    except Exception:
+        return False
+
 def wait_for_controller(device_path, timeout=None):
     """
-    Wait for controller device to become available.
-    Returns True if device is found, False if timeout expires.
+    Wait for controller to be powered on and responsive.
+    Returns True if controller connects, False if timeout expires.
     """
-    print(f"Waiting for controller at {device_path}...")
+    print(f"Waiting for active controller at {device_path}...")
     start_time = time.time()
+    last_message_time = 0
     
     while True:
-        if os.path.exists(device_path):
-            print(f"Controller device {device_path} found!")
-            return True
+        # Show periodic status
+        current_time = time.time()
+        if current_time - last_message_time > 5:
+            elapsed = int(current_time - start_time)
+            print(f"Still waiting for controller... ({elapsed}s elapsed)")
+            last_message_time = current_time
         
-        if timeout is not None and (time.time() - start_time) > timeout:
+        # Check timeout
+        if timeout is not None and (current_time - start_time) > timeout:
             print(f"Timeout waiting for controller after {timeout} seconds")
             return False
         
-        time.sleep(1)  # Check every second
+        # Check if device file exists
+        if not os.path.exists(device_path):
+            print(f"Waiting for receiver/device {device_path}...")
+            time.sleep(2)
+            continue
+        
+        # Device exists - check if controller is actually connected
+        if is_controller_connected(device_path):
+            print(f"Controller connected and ready!")
+            time.sleep(0.5)  # Give it a moment to stabilize
+            return True
+        
+        # Receiver present but no controller yet
+        time.sleep(1)
 
 def main():
     print("Starting Controller UART Bridge...")
@@ -95,13 +140,13 @@ def main():
     jsdev = None
     while True:  # Main retry loop
         try:
-            # Wait for controller to be connected
+            # Wait for controller to be powered on
             if not wait_for_controller(CONTROLLER_DEV, CONTROLLER_WAIT_TIMEOUT):
                 print("Controller wait timeout expired")
                 serial_port.close()
                 sys.exit(1)
             
-            # Try to open the controller
+            # Now try to open it (should succeed since we verified it's connected)
             jsdev = open(CONTROLLER_DEV, 'rb')
             
             # Get the name of the device
@@ -115,6 +160,20 @@ def main():
             print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...")
             time.sleep(2)
             continue
+        except PermissionError as e:
+            print(f"Permission denied for {CONTROLLER_DEV}: {e}")
+            print("Ensure user is in 'input' group: sudo usermod -a -G input blankmcu")
+            time.sleep(5)
+            continue
+        except OSError as e:
+            if e.errno == 22:  # Invalid argument - controller disconnected during open
+                print(f"Controller disconnected during open, retrying...")
+                time.sleep(1)
+                continue
+            else:
+                print(f"OS error opening controller device: {e} (errno {e.errno})")
+                time.sleep(2)
+                continue
         except Exception as e:
             print(f"Error opening controller device: {e}")
             time.sleep(2)
