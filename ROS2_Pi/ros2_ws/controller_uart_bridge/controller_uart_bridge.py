@@ -35,11 +35,11 @@ BUTTON_MAP = {
     0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'BACK', 7: 'START', 8: 'GUIDE'
 }
 
+# ioctl constants for joystick device (from linux/joystick.h)
+def JSIOCGNAME(length):
+    """Get joystick device name - equivalent to JSIOCGNAME(len) from linux/joystick.h"""
+    return 0x80006a00 + length
 
-# Helper function to normalize axis values (-32767 to 32767) to a readable range
-def normalize_axis(value, max_val=32767):
-    # Normalize to -1000 to 1000
-    return int((value / max_val) * 1000)
 
 def format_and_send(uart):
     # Format the data into a single string: "S|LX:0|LY:0|RX:0|RY:0|...|E\n"
@@ -76,7 +76,7 @@ def main():
         jsdev = open(CONTROLLER_DEV, 'rb')
         # Get the name of the device (optional, for logging)
         buf = array.array('B', [0] * 64)
-        fcntl.ioctl(jsdev, 0x80006a13 + (0x10000 * 0x64), buf) 
+        fcntl.ioctl(jsdev, JSIOCGNAME(len(buf)), buf) 
         js_name = buf.tobytes().rstrip(b'\x00').decode('utf8')
         print(f"Listening to controller: {js_name} at {CONTROLLER_DEV}")
     except FileNotFoundError:
