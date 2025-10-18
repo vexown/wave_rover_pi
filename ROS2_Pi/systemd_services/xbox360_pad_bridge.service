@@ -1,8 +1,7 @@
 [Unit]
 Description=Xbox Controller to UART Bridge
-# Ensure this service starts AFTER the xboxdrv service has created the input device
-After=xbox360_pad.service
-Requires=xbox360_pad.service
+# No longer requires xboxdrv to be running at start - will wait for controller
+After=network.target
 
 [Service]
 # Run as your user, as the script is located in your home directory
@@ -11,8 +10,10 @@ Environment="HOME=/home/blankmcu"
 Type=simple
 # Execute the Python script
 ExecStart=/home/blankmcu/ros2_ws/controller_uart_bridge/controller_uart_bridge.py
-Restart=on-failure
-RestartSec=10
+Restart=always
+RestartSec=5
+# Remove restart limits to allow unlimited retries when controller connects/disconnects
+StartLimitIntervalSec=0
 StandardOutput=journal
 StandardError=journal
 

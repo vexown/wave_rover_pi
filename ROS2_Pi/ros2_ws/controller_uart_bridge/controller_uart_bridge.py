@@ -12,6 +12,7 @@ import array
 UART_PORT = "/dev/ttyS0" # Serial Port (UART) connected to the ESP32 when the RPi is inserted onto the waverover top-controller pin header. Allows comms between the two.
 BAUD_RATE = 921600
 CONTROLLER_DEV = "/dev/input/js0" # Use the joystick device
+CONTROLLER_WAIT_TIMEOUT = None  # None = wait forever, or set number of seconds
 
 # Data structure for current controller state
 # Axes are -32767 to 32767 (full 16-bit resolution preserved for maximum precision).
@@ -60,6 +61,25 @@ JS_EVENT_BUTTON = 0x01  # button pressed/released
 JS_EVENT_AXIS = 0x02    # joystick moved
 JS_EVENT_INIT = 0x80    # initial state of device
 
+def wait_for_controller(device_path, timeout=None):
+    """
+    Wait for controller device to become available.
+    Returns True if device is found, False if timeout expires.
+    """
+    print(f"Waiting for controller at {device_path}...")
+    start_time = time.time()
+    
+    while True:
+        if os.path.exists(device_path):
+            print(f"Controller device {device_path} found!")
+            return True
+        
+        if timeout is not None and (time.time() - start_time) > timeout:
+            print(f"Timeout waiting for controller after {timeout} seconds")
+            return False
+        
+        time.sleep(1)  # Check every second
+
 def main():
     print("Starting Controller UART Bridge...")
 
@@ -71,23 +91,34 @@ def main():
         print(f"Could not open serial port {UART_PORT}: {e}")
         sys.exit(1)
 
-    # 2. Open Controller Device
-    try:
-        jsdev = open(CONTROLLER_DEV, 'rb')
-        # Get the name of the device (optional, for logging)
-        buf = array.array('B', [0] * 64)
-        fcntl.ioctl(jsdev, JSIOCGNAME(len(buf)), buf) 
-        js_name = buf.tobytes().rstrip(b'\x00').decode('utf8')
-        print(f"Listening to controller: {js_name} at {CONTROLLER_DEV}")
-    except FileNotFoundError:
-        print(f"Error: Controller device {CONTROLLER_DEV} not found.")
-        print("Ensure xboxdrv is running and the controller is connected.")
-        serial_port.close()
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error opening controller device: {e}")
-        serial_port.close()
-        sys.exit(1)
+    # 2. Wait for and Open Controller Device
+    jsdev = None
+    while True:  # Main retry loop
+        try:
+            # Wait for controller to be connected
+            if not wait_for_controller(CONTROLLER_DEV, CONTROLLER_WAIT_TIMEOUT):
+                print("Controller wait timeout expired")
+                serial_port.close()
+                sys.exit(1)
+            
+            # Try to open the controller
+            jsdev = open(CONTROLLER_DEV, 'rb')
+            
+            # Get the name of the device
+            buf = array.array('B', [0] * 64)
+            fcntl.ioctl(jsdev, JSIOCGNAME(len(buf)), buf) 
+            js_name = buf.tobytes().rstrip(b'\x00').decode('utf8')
+            print(f"Listening to controller: {js_name} at {CONTROLLER_DEV}")
+            break  # Successfully opened, exit retry loop
+            
+        except FileNotFoundError:
+            print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...")
+            time.sleep(2)
+            continue
+        except Exception as e:
+            print(f"Error opening controller device: {e}")
+            time.sleep(2)
+            continue
 
     # 3. Main Event Loop
     try:
@@ -107,33 +138,44 @@ def main():
             if not (js_type & JS_EVENT_INIT):
                 break
 
+        print("Controller initialized, starting main loop...")
+
         while True:
-            # Non-blocking read (read_loop is not used with fcntl open)
-            event_data = jsdev.read(JS_EVENT_SIZE)
-            if not event_data:
-                # Use select or poll for truly non-blocking, but simple read is often sufficient
-                time.sleep(0.001) 
-                continue
+            try:
+                # Non-blocking read (read_loop is not used with fcntl open)
+                event_data = jsdev.read(JS_EVENT_SIZE)
+                if not event_data:
+                    # Use select or poll for truly non-blocking, but simple read is often sufficient
+                    time.sleep(0.001) 
+                    continue
 
-            js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
+                js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
 
-            # Process Axis Event
-            if js_type & JS_EVENT_AXIS:
-                key = AXIS_MAP.get(js_index)
-                if key:
-                    controller_state[key] = js_value  # Store raw value for full precision
+                # Process Axis Event
+                if js_type & JS_EVENT_AXIS:
+                    key = AXIS_MAP.get(js_index)
+                    if key:
+                        controller_state[key] = js_value  # Store raw value for full precision
 
-            # Process Button Event
-            elif js_type & JS_EVENT_BUTTON:
-                key = BUTTON_MAP.get(js_index)
-                if key:
-                    controller_state[key] = js_value # 1 for press, 0 for release
+                # Process Button Event
+                elif js_type & JS_EVENT_BUTTON:
+                    key = BUTTON_MAP.get(js_index)
+                    if key:
+                        controller_state[key] = js_value # 1 for press, 0 for release
 
-            # Send the state if enough time has passed
-            current_time = time.time()
-            if current_time - last_send_time >= SEND_INTERVAL:
-                format_and_send(serial_port)
-                last_send_time = current_time
+                # Send the state if enough time has passed
+                current_time = time.time()
+                if current_time - last_send_time >= SEND_INTERVAL:
+                    format_and_send(serial_port)
+                    last_send_time = current_time
+                    
+            except OSError as e:
+                # Controller disconnected during operation
+                print(f"\nController disconnected: {e}")
+                print("Waiting for controller to reconnect...")
+                jsdev.close()
+                # Return to controller wait loop
+                break
 
     except KeyboardInterrupt:
         print("\nShutting down bridge...")
@@ -141,7 +183,11 @@ def main():
         print(f"\nAn unexpected error occurred: {e}")
 
     finally:
-        jsdev.close()
+        try:
+            if jsdev:
+                jsdev.close()
+        except:
+            pass
         serial_port.close()
         print("Serial port closed. Script finished.")
 
