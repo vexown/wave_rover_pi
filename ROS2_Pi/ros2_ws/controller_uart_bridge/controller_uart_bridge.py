@@ -9,12 +9,12 @@ import struct
 import array
 
 # --- Configuration ---
-UART_PORT = "/dev/ttyS0"
+UART_PORT = "/dev/ttyS0" # Serial Port (UART) connected to the ESP32 when the RPi is inserted onto the waverover top-controller pin header. Allows comms between the two.
 BAUD_RATE = 921600
 CONTROLLER_DEV = "/dev/input/js0" # Use the joystick device
 
 # Data structure for current controller state
-# Axes are -32767 to 32767. We'll normalize them to a small range (-1000 to 1000) for UART.
+# Axes are -32767 to 32767 (full 16-bit resolution preserved for maximum precision).
 controller_state = {
     'LX': 0, 'LY': 0, # Left Stick
     'RX': 0, 'RY': 0, # Right Stick
@@ -121,8 +121,7 @@ def main():
             if js_type & JS_EVENT_AXIS:
                 key = AXIS_MAP.get(js_index)
                 if key:
-                    new_value = normalize_axis(js_value)
-                    controller_state[key] = new_value
+                    controller_state[key] = js_value  # Store raw value for full precision
 
             # Process Button Event
             elif js_type & JS_EVENT_BUTTON:
