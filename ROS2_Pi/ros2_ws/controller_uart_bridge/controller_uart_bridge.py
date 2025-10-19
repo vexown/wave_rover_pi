@@ -57,7 +57,8 @@ def format_and_send(uart):
     try:
         uart.write(data_string.encode('utf-8'))
         # Uncomment for debugging:
-        # print(f"Sent: {data_string.strip()}")
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        print(f"[{timestamp}] Sent: {data_string.strip()}")
     except Exception as e:
         print(f"Error writing to serial: {e}")
 
