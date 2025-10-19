@@ -58,9 +58,9 @@ def format_and_send(uart):
         uart.write(data_string.encode('utf-8'))
         # Uncomment for debugging:
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        print(f"[{timestamp}] Sent: {data_string.strip()}")
+        print(f"[{timestamp}] Sent: {data_string.strip()}", flush=True)
     except Exception as e:
-        print(f"Error writing to serial: {e}")
+        print(f"Error writing to serial: {e}", flush=True)
 
 
 def is_controller_connected(device_path):
@@ -110,7 +110,7 @@ def wait_for_controller(device_path, timeout=None):
     Returns:
         True if controller is ready, False if timeout expires
     """
-    print(f"Waiting for controller at {device_path}...")
+    print(f"Waiting for controller at {device_path}...", flush=True)
     start_time = time.time()
     last_message_time = 0
     
@@ -119,13 +119,13 @@ def wait_for_controller(device_path, timeout=None):
         
         # Check timeout
         if timeout is not None and (current_time - start_time) > timeout:
-            print(f"Timeout waiting for controller after {timeout} seconds")
+            print(f"Timeout waiting for controller after {timeout} seconds", flush=True)
             return False
         
         # Periodic status message (every 5 seconds)
         if current_time - last_message_time > 5:
             elapsed = int(current_time - start_time)
-            print(f"Still waiting for controller... ({elapsed}s elapsed)")
+            print(f"Still waiting for controller... ({elapsed}s elapsed)", flush=True)
             last_message_time = current_time
         
         # Check if device file exists
@@ -135,7 +135,7 @@ def wait_for_controller(device_path, timeout=None):
         
         # Device exists - test if controller is actually connected
         if is_controller_connected(device_path):
-            print(f"Controller connected at {device_path}")
+            print(f"Controller connected at {device_path}", flush=True)
             return True
         
         # Device exists but controller not responding yet (e.g., receiver present but controller off)
@@ -152,14 +152,14 @@ def main():
     3. Reads controller events and sends them to the ESP32
     4. Handles controller disconnects/reconnects gracefully
     """
-    print("Starting Controller UART Bridge...")
+    print("Starting Controller UART Bridge...", flush=True)
 
     # 1. Open Serial Port
     try:
         serial_port = Serial(UART_PORT, BAUD_RATE)
-        print(f"Successfully opened serial port {UART_PORT} at {BAUD_RATE} baud.")
+        print(f"Successfully opened serial port {UART_PORT} at {BAUD_RATE} baud.", flush=True)
     except Exception as e:
-        print(f"Could not open serial port {UART_PORT}: {e}")
+        print(f"Could not open serial port {UART_PORT}: {e}", flush=True)
         sys.exit(1)
 
     # 2. Wait for and Open Controller Device
@@ -168,30 +168,30 @@ def main():
         try:
             # Wait for controller to be powered on and connected
             if not wait_for_controller(CONTROLLER_DEV, CONTROLLER_WAIT_TIMEOUT):
-                print("Controller wait timeout expired")
+                print("Controller wait timeout expired", flush=True)
                 serial_port.close()
                 sys.exit(1)
             
             # Controller is ready - open the device
             jsdev = open(CONTROLLER_DEV, 'rb')
-            print(f"Successfully opened controller device {CONTROLLER_DEV}")
+            print(f"Successfully opened controller device {CONTROLLER_DEV}", flush=True)
             break  # Exit retry loop
             
         except FileNotFoundError:
-            print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...")
+            print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...", flush=True)
             time.sleep(2)
             continue
         except PermissionError as e:
-            print(f"Permission denied for {CONTROLLER_DEV}: {e}")
-            print("Ensure user is in 'input' group: sudo usermod -a -G input blankmcu")
+            print(f"Permission denied for {CONTROLLER_DEV}: {e}", flush=True)
+            print("Ensure user is in 'input' group: sudo usermod -a -G input blankmcu", flush=True)
             time.sleep(5)
             continue
         except OSError as e:
-            print(f"OS error opening controller device: {e} (errno {e.errno})")
+            print(f"OS error opening controller device: {e} (errno {e.errno})", flush=True)
             time.sleep(2)
             continue
         except Exception as e:
-            print(f"Error opening controller device: {e}")
+            print(f"Error opening controller device: {e}", flush=True)
             time.sleep(2)
             continue
 
@@ -214,7 +214,7 @@ def main():
             if not (js_type & JS_EVENT_INIT):
                 break
 
-        print("Controller initialized, starting main loop...")
+        print("Controller initialized, starting main loop...", flush=True)
 
         # Main event processing loop
         while True:
@@ -248,16 +248,16 @@ def main():
                     
             except OSError as e:
                 # Controller disconnected during operation
-                print(f"\nController disconnected: {e}")
-                print("Waiting for controller to reconnect...")
+                print(f"\nController disconnected: {e}", flush=True)
+                print("Waiting for controller to reconnect...", flush=True)
                 jsdev.close()
                 # Return to controller wait loop
                 break
 
     except KeyboardInterrupt:
-        print("\nShutting down bridge...")
+        print("\nShutting down bridge...", flush=True)
     except Exception as e:
-        print(f"\nAn unexpected error occurred: {e}")
+        print(f"\nAn unexpected error occurred: {e}", flush=True)
 
     finally:
         # Clean up resources
@@ -267,7 +267,7 @@ def main():
         except:
             pass
         serial_port.close()
-        print("Serial port closed. Script finished.")
+        print("Serial port closed. Script finished.", flush=True)
 
 
 if __name__ == "__main__":
