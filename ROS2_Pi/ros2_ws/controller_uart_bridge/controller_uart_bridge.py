@@ -57,7 +57,7 @@ def format_and_send(uart):
     try:
         uart.write(data_string.encode('utf-8'))
         # Uncomment for debugging:
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        timestamp = int(time.time() * 1000)  # Milliseconds since epoch
         print(f"[{timestamp}] Sent: {data_string.strip()}", flush=True)
     except Exception as e:
         print(f"Error writing to serial: {e}", flush=True)
