@@ -43,6 +43,12 @@ JS_EVENT_BUTTON = 0x01  # button pressed/released
 JS_EVENT_AXIS = 0x02    # joystick moved
 JS_EVENT_INIT = 0x80    # initial state of device
 
+# Update rate configuration
+# IMPORTANT: Increased from 20Hz to 100Hz to catch fast joystick movements
+# This prevents missing "return to center" events when joystick is quickly released
+SEND_INTERVAL = 0.01  # Send updates at 100 Hz (every 10ms) - was 0.05 (20Hz)
+JOYSTICK_IMMEDIATE_SEND = True  # Send immediately when joystick axes change (LX, LY, RX, RY)
+
 
 def format_and_send(uart):
     """
@@ -198,7 +204,6 @@ def main():
     # 3. Main Event Loop
     try:
         last_send_time = time.time()
-        SEND_INTERVAL = 0.05  # Send updates at 20 Hz (every 50ms)
 
         # Discard initial state events
         # The joystick device sends JS_EVENT_INIT events on startup
@@ -214,35 +219,60 @@ def main():
             if not (js_type & JS_EVENT_INIT):
                 break
 
-        print("Controller initialized, starting main loop...", flush=True)
+        print("Controller initialized, starting main loop (100Hz updates)...", flush=True)
 
         # Main event processing loop
         while True:
             try:
-                # Read controller events
-                event_data = jsdev.read(JS_EVENT_SIZE)
-                if not event_data:
-                    time.sleep(0.001)
-                    continue
-
-                # Unpack event: time, value, type, index
-                js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
-
-                # Process Axis Event (joysticks, triggers, d-pad)
-                if js_type & JS_EVENT_AXIS:
-                    key = AXIS_MAP.get(js_index)
-                    if key:
-                        controller_state[key] = js_value  # Store raw 16-bit value
-
-                # Process Button Event
-                elif js_type & JS_EVENT_BUTTON:
-                    key = BUTTON_MAP.get(js_index)
-                    if key:
-                        controller_state[key] = js_value  # 1 for press, 0 for release
-
-                # Send state to ESP32 at regular intervals (throttled to 20 Hz)
+                # Use select() with timeout to efficiently wait for controller events
+                # This allows us to batch process multiple events and maintain consistent send rate
+                ready, _, _ = select.select([jsdev], [], [], SEND_INTERVAL)
+                
                 current_time = time.time()
-                if current_time - last_send_time >= SEND_INTERVAL:
+                joystick_moved = False  # Track if critical joystick axes changed
+                
+                # Process all available events (batch processing)
+                # This ensures we don't miss events that happen in quick succession
+                if ready:
+                    while True:
+                        # Try to read event without blocking
+                        try:
+                            event_data = jsdev.read(JS_EVENT_SIZE)
+                            if not event_data:
+                                break
+                        except:
+                            break
+
+                        # Unpack event: time, value, type, index
+                        js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
+
+                        # Process Axis Event (joysticks, triggers, d-pad)
+                        if js_type & JS_EVENT_AXIS:
+                            key = AXIS_MAP.get(js_index)
+                            if key:
+                                controller_state[key] = js_value  # Store raw 16-bit value
+                                # Mark that a critical joystick axis moved (for immediate send)
+                                # This is crucial to catch "return to center" events on fast movements
+                                if key in ['LX', 'LY', 'RX', 'RY']:
+                                    joystick_moved = True
+
+                        # Process Button Event
+                        elif js_type & JS_EVENT_BUTTON:
+                            key = BUTTON_MAP.get(js_index)
+                            if key:
+                                controller_state[key] = js_value  # 1 for press, 0 for release
+                        
+                        # Check if more data available in the buffer
+                        # If yes, continue reading; if no, break and send current state
+                        ready_check, _, _ = select.select([jsdev], [], [], 0)
+                        if not ready_check:
+                            break
+
+                # Send state to ESP32 immediately if joystick moved, OR at regular interval
+                # Immediate send on joystick movement prevents missing "return to center" events
+                # Regular interval ensures continuous updates even when controller is idle
+                if (JOYSTICK_IMMEDIATE_SEND and joystick_moved) or \
+                   (current_time - last_send_time >= SEND_INTERVAL):
                     format_and_send(serial_port)
                     last_send_time = current_time
                     
