@@ -48,9 +48,11 @@ SEND_INTERVAL = 0.01  # Send updates at 100 Hz (every 10ms) - was 0.05 (20Hz)
 JOYSTICK_IMMEDIATE_SEND = True  # Send immediately when joystick axes change (LX, LY, RX, RY)
 
 # Disconnect detection timeout
-# Xbox wireless controllers send periodic events even when idle
-# If no events received for this duration, assume controller disconnected
-DISCONNECT_TIMEOUT = 10.0  # seconds
+# I haven't found a reliable way to detect controller disconnects because
+# the Microsoft Xbox Wireless Receiver keeps the device file present even when
+# no controller is paired. So for now I'm using a timeout-based approach to 
+# detect lack of controller events as a sign of disconnect.
+DISCONNECT_TIMEOUT = 5.0  # seconds
 
 
 def format_and_send(uart):
@@ -171,148 +173,158 @@ def main():
         print(f"Could not open serial port {UART_PORT}: {e}", flush=True)
         sys.exit(1)
 
-    # 2. Wait for and Open Controller Device
-    jsdev = None
-    while True:  # Main retry loop for controller connection
-        try:
-            # Wait for controller to be powered on and connected
-            if not wait_for_controller(CONTROLLER_DEV, CONTROLLER_WAIT_TIMEOUT):
-                print("Controller wait timeout expired", flush=True)
-                serial_port.close()
-                sys.exit(1)
-            
-            # Controller is ready - open the device
-            jsdev = open(CONTROLLER_DEV, 'rb')
-            print(f"Successfully opened controller device {CONTROLLER_DEV}", flush=True)
-            break  # Exit retry loop
-            
-        except FileNotFoundError:
-            print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...", flush=True)
-            time.sleep(2)
-            continue
-        except PermissionError as e:
-            print(f"Permission denied for {CONTROLLER_DEV}: {e}", flush=True)
-            print("Ensure user is in 'input' group: sudo usermod -a -G input blankmcu", flush=True)
-            time.sleep(5)
-            continue
-        except OSError as e:
-            print(f"OS error opening controller device: {e} (errno {e.errno})", flush=True)
-            time.sleep(2)
-            continue
-        except Exception as e:
-            print(f"Error opening controller device: {e}", flush=True)
-            time.sleep(2)
-            continue
-
-    # 3. Main Event Loop
+    # 2. Main Controller Connection Loop
+    # This outer loop handles controller connect/disconnect/reconnect cycles
+    # The script stays alive and keeps the serial port open throughout
     try:
-        last_send_time = time.time()
-        last_event_time = time.time()  # Track when we last received controller events
-
-        # Discard initial state events
-        # The joystick device sends JS_EVENT_INIT events on startup
-        # to report the current state of all buttons/axes
-        while True:
-            event_data = jsdev.read(JS_EVENT_SIZE)
-            if not event_data:
-                break
-
-            js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
+        while True:  # Main retry loop for controller connection
+            jsdev = None
             
-            # Break when we get a non-init event (actual controller input)
-            if not (js_type & JS_EVENT_INIT):
-                break
-
-        print("Controller initialized, starting main loop (100Hz updates)...", flush=True)
-
-        # Main event processing loop
-        while True:
             try:
-                # Use select() with timeout to efficiently wait for controller events
-                # This allows us to batch process multiple events and maintain consistent send rate
-                ready, _, _ = select.select([jsdev], [], [], SEND_INTERVAL)
+                # Wait for controller to be powered on and connected
+                if not wait_for_controller(CONTROLLER_DEV, CONTROLLER_WAIT_TIMEOUT):
+                    print("Controller wait timeout expired", flush=True)
+                    break  # Exit main loop, will close serial and exit
                 
-                current_time = time.time()
-                joystick_moved = False  # Track if critical joystick axes changed
+                # Controller is ready - open the device
+                jsdev = open(CONTROLLER_DEV, 'rb')
+                print(f"Successfully opened controller device {CONTROLLER_DEV}", flush=True)
                 
-                # Check for controller disconnect via event timeout
-                if current_time - last_event_time > DISCONNECT_TIMEOUT:
-                    print(f"\nNo controller events for {DISCONNECT_TIMEOUT}s - controller disconnected", flush=True)
-                    
-                    # Reset controller state to neutral
-                    for key in controller_state:
-                        controller_state[key] = 0
-                    
-                    # Send neutral state to ESP32
-                    format_and_send(serial_port)
-                    print("Sent neutral state after disconnect detection", flush=True)
-                    
-                    jsdev.close()
-                    break  # Return to controller wait loop
-                
-                # Process all available events (batch processing)
-                # This ensures we don't miss events that happen in quick succession
-                if ready:
-                    last_event_time = current_time  # Update timestamp when we receive events
-                    
-                    while True:
-                        # Try to read event without blocking
-                        try:
-                            event_data = jsdev.read(JS_EVENT_SIZE)
-                            if not event_data:
-                                break
-                        except:
-                            break
-
-                        # Unpack event: time, value, type, index
-                        js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
-
-                        # Process Axis Event (joysticks, triggers, d-pad)
-                        if js_type & JS_EVENT_AXIS:
-                            key = AXIS_MAP.get(js_index)
-                            if key:
-                                controller_state[key] = js_value  # Store raw 16-bit value
-                                # Mark that a critical joystick axis moved (for immediate send)
-                                # This is crucial to catch "return to center" events on fast movements
-                                if key in ['LX', 'LY', 'RX', 'RY']:
-                                    joystick_moved = True
-
-                        # Process Button Event
-                        elif js_type & JS_EVENT_BUTTON:
-                            key = BUTTON_MAP.get(js_index)
-                            if key:
-                                controller_state[key] = js_value  # 1 for press, 0 for release
-                        
-                        # Check if more data available in the buffer
-                        # If yes, continue reading; if no, break and send current state
-                        ready_check, _, _ = select.select([jsdev], [], [], 0)
-                        if not ready_check:
-                            break
-
-                # Send state to ESP32 immediately if joystick moved, OR at regular interval
-                # Immediate send on joystick movement prevents missing "return to center" events
-                # Regular interval ensures continuous updates even when controller is idle
-                if (JOYSTICK_IMMEDIATE_SEND and joystick_moved) or \
-                   (current_time - last_send_time >= SEND_INTERVAL):
-                    format_and_send(serial_port)
-                    last_send_time = current_time
-                    
+            except FileNotFoundError:
+                print(f"Controller device {CONTROLLER_DEV} disappeared, waiting again...", flush=True)
+                time.sleep(2)
+                continue
+            except PermissionError as e:
+                print(f"Permission denied for {CONTROLLER_DEV}: {e}", flush=True)
+                print("Ensure user is in 'input' group: sudo usermod -a -G input blankmcu", flush=True)
+                time.sleep(5)
+                continue
             except OSError as e:
-                # Controller disconnected during operation
-                print(f"\nController disconnected: {e}", flush=True)
+                print(f"OS error opening controller device: {e} (errno {e.errno})", flush=True)
+                time.sleep(2)
+                continue
+            except Exception as e:
+                print(f"Error opening controller device: {e}", flush=True)
+                time.sleep(2)
+                continue
+
+            # 3. Main Event Loop
+            try:
+                last_send_time = time.time()
+                last_event_time = time.time()  # Track when we last received controller events
+
+                # Discard initial state events
+                # The joystick device sends JS_EVENT_INIT events on startup
+                # to report the current state of all buttons/axes
+                while True:
+                    event_data = jsdev.read(JS_EVENT_SIZE)
+                    if not event_data:
+                        break
+
+                    js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
+                    
+                    # Break when we get a non-init event (actual controller input)
+                    if not (js_type & JS_EVENT_INIT):
+                        break
+
+                print("Controller initialized, starting main loop (100Hz updates)...", flush=True)
+
+                # Main event processing loop
+                while True:
+                    try:
+                        # Use select() with timeout to efficiently wait for controller events
+                        # This allows us to batch process multiple events and maintain consistent send rate
+                        ready, _, _ = select.select([jsdev], [], [], SEND_INTERVAL)
+                        
+                        current_time = time.time()
+                        joystick_moved = False  # Track if critical joystick axes changed
+                        
+                        # Check for controller disconnect via event timeout
+                        if current_time - last_event_time > DISCONNECT_TIMEOUT:
+                            print(f"\nNo controller events for {DISCONNECT_TIMEOUT}s - controller disconnected", flush=True)
+                            
+                            # Reset controller state to neutral
+                            for key in controller_state:
+                                controller_state[key] = 0
+                            
+                            # Send neutral state to ESP32
+                            format_and_send(serial_port)
+                            print("Sent neutral state after disconnect detection", flush=True)
+                            
+                            break  # Exit inner loop, will close jsdev and go back to wait loop
+                        
+                        # Process all available events (batch processing)
+                        # This ensures we don't miss events that happen in quick succession
+                        if ready:
+                            last_event_time = current_time  # Update timestamp when we receive events
+                            
+                            while True:
+                                # Try to read event without blocking
+                                try:
+                                    event_data = jsdev.read(JS_EVENT_SIZE)
+                                    if not event_data:
+                                        break
+                                except:
+                                    break
+
+                                # Unpack event: time, value, type, index
+                                js_time, js_value, js_type, js_index = struct.unpack('IhBB', event_data)
+
+                                # Process Axis Event (joysticks, triggers, d-pad)
+                                if js_type & JS_EVENT_AXIS:
+                                    key = AXIS_MAP.get(js_index)
+                                    if key:
+                                        controller_state[key] = js_value  # Store raw 16-bit value
+                                        # Mark that a critical joystick axis moved (for immediate send)
+                                        # This is crucial to catch "return to center" events on fast movements
+                                        if key in ['LX', 'LY', 'RX', 'RY']:
+                                            joystick_moved = True
+
+                                # Process Button Event
+                                elif js_type & JS_EVENT_BUTTON:
+                                    key = BUTTON_MAP.get(js_index)
+                                    if key:
+                                        controller_state[key] = js_value  # 1 for press, 0 for release
+                                
+                                # Check if more data available in the buffer
+                                # If yes, continue reading; if no, break and send current state
+                                ready_check, _, _ = select.select([jsdev], [], [], 0)
+                                if not ready_check:
+                                    break
+
+                        # Send state to ESP32 immediately if joystick moved, OR at regular interval
+                        # Immediate send on joystick movement prevents missing "return to center" events
+                        # Regular interval ensures continuous updates even when controller is idle
+                        if (JOYSTICK_IMMEDIATE_SEND and joystick_moved) or \
+                           (current_time - last_send_time >= SEND_INTERVAL):
+                            format_and_send(serial_port)
+                            last_send_time = current_time
+                            
+                    except OSError as e:
+                        # Controller disconnected during operation
+                        print(f"\nController disconnected: {e}", flush=True)
+                        
+                        # Reset controller state to neutral
+                        for key in controller_state:
+                            controller_state[key] = 0
+                        
+                        # Send neutral state to ESP32
+                        format_and_send(serial_port)
+                        print("Sent neutral state after disconnect", flush=True)
+                        
+                        break  # Exit inner loop
+                        
+            finally:
+                # Clean up controller device after disconnect
+                if jsdev:
+                    try:
+                        jsdev.close()
+                        print("Closed controller device", flush=True)
+                    except:
+                        pass
                 
-                # Reset controller state to neutral
-                for key in controller_state:
-                    controller_state[key] = 0
-                
-                # Send neutral state to ESP32
-                format_and_send(serial_port)
-                print("Sent neutral state after disconnect", flush=True)
-                
-                print("Waiting for controller to reconnect...", flush=True)
-                jsdev.close()
-                # Return to controller wait loop
-                break
+                # Loop continues back to wait_for_controller()
+                print("Returning to controller wait loop...", flush=True)
 
     except KeyboardInterrupt:
         print("\nShutting down bridge...", flush=True)
@@ -320,12 +332,7 @@ def main():
         print(f"\nAn unexpected error occurred: {e}", flush=True)
 
     finally:
-        # Clean up resources
-        try:
-            if jsdev:
-                jsdev.close()
-        except:
-            pass
+        # Clean up resources on final exit
         serial_port.close()
         print("Serial port closed. Script finished.", flush=True)
 
