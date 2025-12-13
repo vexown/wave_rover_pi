@@ -50,7 +50,7 @@ JOYSTICK_IMMEDIATE_SEND = True  # Send immediately when joystick axes change (LX
 # Disconnect detection timeout
 # Xbox wireless controllers send periodic events even when idle
 # If no events received for this duration, assume controller disconnected
-DISCONNECT_TIMEOUT = 3.0  # seconds
+DISCONNECT_TIMEOUT = 10.0  # seconds
 
 
 def format_and_send(uart):
