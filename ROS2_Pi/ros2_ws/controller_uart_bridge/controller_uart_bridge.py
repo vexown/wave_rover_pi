@@ -24,15 +24,62 @@ controller_state = {
     'LB': 0, 'RB': 0, 'BACK': 0, 'START': 0, 'GUIDE': 0,  # Other Buttons
 }
 
-# Mapping of joystick index to controller_state key
-# Axis indices: 0=LX, 1=LY, 2=LT, 3=RX, 4=RY, 5=RT, 6=DPX, 7=DPY (May vary based on xboxdrv config)
+# ============================================================================
+# Xbox 360 Controller Mapping (Experimentally Determined)
+# ============================================================================
+# This mapping was determined using the test_controller_mapping.py diagnostic tool
+# and is specific to the Xbox 360 controller with Microsoft Wireless Receiver.
+#
+# AXES (Analog inputs, range: -32767 to 32767):
+# -----------------------------------------------
+# Index 0: Left Joystick X-axis (LX)
+# Index 1: Left Joystick Y-axis (LY)
+# Index 2: Right Joystick X-axis (RX)
+# Index 3: Right Joystick Y-axis (RY)
+# Index 4: Right Trigger (RT) - 32767 fully pressed, -32767 fully released
+# Index 5: Left Trigger (LT) - 32767 fully pressed, -32767 fully released
+# Index 6: D-Pad X-axis (DPX) - -32767 left, 32767 right, 0 centered
+# Index 7: D-Pad Y-axis (DPY) - -32767 up, 32767 down, 0 centered
+#
+# BUTTONS (Digital inputs, 0=released, 1=pressed):
+# ------------------------------------------------
+# Index 0: A button
+# Index 1: B button
+# Index 2: X button
+# Index 3: Y button
+# Index 4: Left Bumper (LB)
+# Index 5: Right Bumper (RB)
+# Index 6: Back button
+# Index 7: Start button
+# Index 8: Guide button (Xbox logo) - NOTE: Not included in controller_state
+# Index 9: Left Joystick Press (L3) - NOTE: Not included in controller_state
+# Index 10: Right Joystick Press (R3) - NOTE: Not included in controller_state
+# ============================================================================
+
+# Mapping of joystick axis index to controller_state key
 AXIS_MAP = {
-    0: 'LX', 1: 'LY', 2: 'LT', 3: 'RX', 4: 'RY', 5: 'RT', 6: 'DPX', 7: 'DPY'
+    0: 'LX',   # Left Joystick X-axis
+    1: 'LY',   # Left Joystick Y-axis
+    2: 'RX',   # Right Joystick X-axis
+    3: 'RY',   # Right Joystick Y-axis
+    4: 'RT',   # Right Trigger (32767 pressed, -32767 released)
+    5: 'LT',   # Left Trigger (32767 pressed, -32767 released)
+    6: 'DPX',  # D-Pad X-axis (-32767 left, 32767 right)
+    7: 'DPY'   # D-Pad Y-axis (-32767 up, 32767 down)
 }
 
-# Button indices: 0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=Back, 7=Start, 8=Guide (May vary)
+# Mapping of joystick button index to controller_state key
 BUTTON_MAP = {
-    0: 'A', 1: 'B', 2: 'X', 3: 'Y', 4: 'LB', 5: 'RB', 6: 'BACK', 7: 'START', 8: 'GUIDE'
+    0: 'A',      # A button
+    1: 'B',      # B button
+    2: 'X',      # X button
+    3: 'Y',      # Y button
+    4: 'LB',     # Left Bumper
+    5: 'RB',     # Right Bumper
+    6: 'BACK',   # Back button
+    7: 'START',  # Start button
+    # Note: Guide button (index 8), L3 (index 9), and R3 (index 10) are available
+    # but not currently mapped to controller_state
 }
 
 # Constants for joystick event reading
@@ -159,13 +206,13 @@ def main():
     
     This bridge:
     1. Opens a serial connection to the ESP32
-    2. Waits for an Xbox controller to connect via xboxdrv
+    2. Waits for an Xbox controller to connect
     3. Reads controller events and sends them to the ESP32
     4. Handles controller disconnects/reconnects gracefully
     """
     print("Starting Controller UART Bridge...", flush=True)
 
-    # 1. Open Serial Port
+    # 1. Open Serial Port (once, stays open for entire script lifetime)
     try:
         serial_port = Serial(UART_PORT, BAUD_RATE)
         print(f"Successfully opened serial port {UART_PORT} at {BAUD_RATE} baud.", flush=True)
@@ -200,7 +247,7 @@ def main():
                 time.sleep(5)
                 continue
             except OSError as e:
-                print(f"OS error opening controller device: {e} (errno {e.errno})", flush=True)
+                print(f"OS error opening controller device: {e}", flush=True)
                 time.sleep(2)
                 continue
             except Exception as e:
@@ -208,10 +255,10 @@ def main():
                 time.sleep(2)
                 continue
 
-            # 3. Main Event Loop
+            # 3. Main Event Loop (for this connection session)
             try:
                 last_send_time = time.time()
-                last_event_time = time.time()  # Track when we last received controller events
+                last_event_time = time.time()
 
                 # Discard initial state events
                 # The joystick device sends JS_EVENT_INIT events on startup
@@ -251,7 +298,7 @@ def main():
                             format_and_send(serial_port)
                             print("Sent neutral state after disconnect detection", flush=True)
                             
-                            break  # Exit inner loop, will close jsdev and go back to wait loop
+                            break  # Exit inner loop, will close jsdev and restart outer loop
                         
                         # Process all available events (batch processing)
                         # This ensures we don't miss events that happen in quick succession
@@ -313,9 +360,9 @@ def main():
                         print("Sent neutral state after disconnect", flush=True)
                         
                         break  # Exit inner loop
-                        
+                
             finally:
-                # Clean up controller device after disconnect
+                # Clean up this controller session
                 if jsdev:
                     try:
                         jsdev.close()
@@ -323,7 +370,7 @@ def main():
                     except:
                         pass
                 
-                # Loop continues back to wait_for_controller()
+                # Loop back to wait for controller reconnection
                 print("Returning to controller wait loop...", flush=True)
 
     except KeyboardInterrupt:
@@ -332,7 +379,7 @@ def main():
         print(f"\nAn unexpected error occurred: {e}", flush=True)
 
     finally:
-        # Clean up resources on final exit
+        # Clean up serial port on final exit
         serial_port.close()
         print("Serial port closed. Script finished.", flush=True)
 
