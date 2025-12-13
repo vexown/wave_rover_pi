@@ -5,9 +5,7 @@ import sys
 import time
 from periphery import Serial
 import select
-import fcntl
 import struct
-import array
 
 # --- Configuration ---
 UART_PORT = "/dev/ttyS0"  # Serial Port (UART) connected to the ESP32 when the RPi is inserted onto the waverover top-controller pin header. Allows comms between the two.
@@ -49,6 +47,11 @@ JS_EVENT_INIT = 0x80    # initial state of device
 SEND_INTERVAL = 0.01  # Send updates at 100 Hz (every 10ms) - was 0.05 (20Hz)
 JOYSTICK_IMMEDIATE_SEND = True  # Send immediately when joystick axes change (LX, LY, RX, RY)
 
+# Disconnect detection timeout
+# Xbox wireless controllers send periodic events even when idle
+# If no events received for this duration, assume controller disconnected
+DISCONNECT_TIMEOUT = 3.0  # seconds
+
 
 def format_and_send(uart):
     """
@@ -63,8 +66,8 @@ def format_and_send(uart):
     try:
         uart.write(data_string.encode('utf-8'))
         # Uncomment for debugging:
-        timestamp = int(time.time() * 1000)  # Milliseconds since epoch
-        print(f"[{timestamp}] Sent: {data_string.strip()}", flush=True)
+        # timestamp = int(time.time() * 1000)  # Milliseconds since epoch
+        # print(f"[{timestamp}] Sent: {data_string.strip()}", flush=True)
     except Exception as e:
         print(f"Error writing to serial: {e}", flush=True)
 
@@ -204,6 +207,7 @@ def main():
     # 3. Main Event Loop
     try:
         last_send_time = time.time()
+        last_event_time = time.time()  # Track when we last received controller events
 
         # Discard initial state events
         # The joystick device sends JS_EVENT_INIT events on startup
@@ -231,9 +235,26 @@ def main():
                 current_time = time.time()
                 joystick_moved = False  # Track if critical joystick axes changed
                 
+                # Check for controller disconnect via event timeout
+                if current_time - last_event_time > DISCONNECT_TIMEOUT:
+                    print(f"\nNo controller events for {DISCONNECT_TIMEOUT}s - controller disconnected", flush=True)
+                    
+                    # Reset controller state to neutral
+                    for key in controller_state:
+                        controller_state[key] = 0
+                    
+                    # Send neutral state to ESP32
+                    format_and_send(serial_port)
+                    print("Sent neutral state after disconnect detection", flush=True)
+                    
+                    jsdev.close()
+                    break  # Return to controller wait loop
+                
                 # Process all available events (batch processing)
                 # This ensures we don't miss events that happen in quick succession
                 if ready:
+                    last_event_time = current_time  # Update timestamp when we receive events
+                    
                     while True:
                         # Try to read event without blocking
                         try:
@@ -279,6 +300,15 @@ def main():
             except OSError as e:
                 # Controller disconnected during operation
                 print(f"\nController disconnected: {e}", flush=True)
+                
+                # Reset controller state to neutral
+                for key in controller_state:
+                    controller_state[key] = 0
+                
+                # Send neutral state to ESP32
+                format_and_send(serial_port)
+                print("Sent neutral state after disconnect", flush=True)
+                
                 print("Waiting for controller to reconnect...", flush=True)
                 jsdev.close()
                 # Return to controller wait loop
