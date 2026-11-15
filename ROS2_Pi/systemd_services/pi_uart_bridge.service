@@ -1,5 +1,5 @@
 [Unit]
-Description=Xbox Controller to UART Bridge
+Description=Raspberry Pi to ESP32 UART bridge (Xbox controller frames and Pi status line)
 # No longer requires xboxdrv to be running at start - will wait for controller
 After=network.target
 # Remove restart limits to allow unlimited retries when controller connects/disconnects
@@ -9,10 +9,10 @@ StartLimitIntervalSec=0
 # Run as your user, as the script is located in your home directory
 User=blankmcu
 Environment="HOME=/home/blankmcu"
-WorkingDirectory=/home/blankmcu/ros2_ws/controller_uart_bridge
+WorkingDirectory=/home/blankmcu/ros2_ws/pi_uart_bridge
 Type=simple
 # Execute the Python script
-ExecStart=/usr/bin/python3 /home/blankmcu/ros2_ws/controller_uart_bridge/controller_uart_bridge.py
+ExecStart=/usr/bin/python3 /home/blankmcu/ros2_ws/pi_uart_bridge/pi_uart_bridge.py
 Restart=always
 RestartSec=5
 StandardOutput=journal

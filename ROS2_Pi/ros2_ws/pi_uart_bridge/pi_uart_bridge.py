@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
+"""
+Raspberry Pi to ESP32 UART bridge.
+
+The only process that writes to the UART going to the wave_rover_driver board. It sends:
+ - Xbox controller frames, while a controller is in use:  S|LX:0|LY:0|...|E\n
+ - a status line, once per second, always:                 $PI,<uptime_s>,<flags>*<checksum>\n
+"""
 
 import os
+import subprocess
 import sys
+import threading
 import time
 from periphery import Serial
 import select
@@ -101,6 +110,32 @@ JOYSTICK_IMMEDIATE_SEND = True  # Send immediately when joystick axes change (LX
 # detect lack of controller events as a sign of disconnect.
 DISCONNECT_TIMEOUT = 5.0  # seconds
 
+# Status line, shown by the wave_rover_driver board in the Raspberry Pi row of its STATUS panel.
+# The driver board shows the Pi as offline after 3 s without one.
+#
+# Format: $PI,<uptime_s>,<flags>*<checksum>\n
+#   uptime_s  seconds since the Pi booted, decimal
+#   flags     sum of the STATUS_FLAG_ values below, decimal
+#   checksum  XOR of all characters between '$' and '*', two uppercase hex digits
+#
+# The flag values must match ROBOT_PI_FLAG_ in robot_status.h of the wave_rover_driver repo.
+STATUS_INTERVAL = 1.0  # seconds
+STATUS_FLAG_CONTROLLER_ACTIVE = 0x01  # Controller frames are being sent (events within DISCONNECT_TIMEOUT)
+# ros2_camera_feed.service is not in the list: it is disabled on purpose.
+STATUS_SERVICES = [  # (systemd unit, flag set when the unit is active)
+    ("xbox360_pad.service",       0x02),
+    ("ros2_serial_nodes.service", 0x04),
+    ("ros2_imu_parser.service",   0x08),
+    ("ros2_gps_parser.service",   0x10),
+]
+
+# The main thread sends controller frames and the status thread sends status lines.
+# Each one is written while holding this lock, so they can't get mixed on the wire.
+uart_write_lock = threading.Lock()
+
+# Set by the main thread, read by the status thread
+controller_active = False
+
 
 def format_and_send(uart):
     """
@@ -113,12 +148,67 @@ def format_and_send(uart):
     data_string += "|E\n"
     
     try:
-        uart.write(data_string.encode('utf-8'))
+        with uart_write_lock:
+            uart.write(data_string.encode('utf-8'))
         # Uncomment for debugging:
         # timestamp = int(time.time() * 1000)  # Milliseconds since epoch
         # print(f"[{timestamp}] Sent: {data_string.strip()}", flush=True)
     except Exception as e:
         print(f"Error writing to serial: {e}", flush=True)
+
+
+def build_status_line():
+    """
+    Build the status line: Pi uptime, whether a controller is active and which services run.
+    """
+    with open('/proc/uptime') as uptime_file:
+        uptime_s = int(float(uptime_file.read().split()[0]))
+
+    flags = STATUS_FLAG_CONTROLLER_ACTIVE if controller_active else 0
+
+    # systemctl prints one state per unit, in the order the units were given.
+    # Its exit code is not checked: it is non-zero whenever any unit is not active.
+    units = [unit for unit, _ in STATUS_SERVICES]
+    result = subprocess.run(["systemctl", "is-active"] + units,
+                            capture_output=True, text=True, timeout=2)
+    states = result.stdout.split()
+    if len(states) != len(units):
+        raise RuntimeError(f"systemctl is-active returned {len(states)} states for {len(units)} units")
+    for (_, flag), state in zip(STATUS_SERVICES, states):
+        if state == "active":
+            flags |= flag
+
+    payload = f"PI,{uptime_s},{flags}"
+    checksum = 0
+    for character in payload:
+        checksum ^= ord(character)
+    return f"${payload}*{checksum:02X}\n"
+
+
+def status_task(uart):
+    """
+    Thread: send the status line once per second, whatever the controller is doing.
+    """
+    last_error = None
+
+    while True:
+        try:
+            status_line = build_status_line()
+            with uart_write_lock:
+                uart.write(status_line.encode('utf-8'))
+            error = None
+        except Exception as e:
+            error = str(e)
+
+        # Print only when the result changes, not once per second
+        if error != last_error:
+            if error is not None:
+                print(f"Status line not sent: {error}", flush=True)
+            else:
+                print("Status line is being sent again", flush=True)
+            last_error = error
+
+        time.sleep(STATUS_INTERVAL)
 
 
 def is_controller_connected(device_path):
@@ -202,15 +292,18 @@ def wait_for_controller(device_path, timeout=None):
 
 def main():
     """
-    Main entry point for the Xbox Controller to UART Bridge.
+    Main entry point for the Raspberry Pi to ESP32 UART bridge.
     
     This bridge:
     1. Opens a serial connection to the ESP32
-    2. Waits for an Xbox controller to connect
-    3. Reads controller events and sends them to the ESP32
-    4. Handles controller disconnects/reconnects gracefully
+    2. Starts sending the status line once per second
+    3. Waits for an Xbox controller to connect
+    4. Reads controller events and sends them to the ESP32
+    5. Handles controller disconnects/reconnects gracefully
     """
-    print("Starting Controller UART Bridge...", flush=True)
+    global controller_active
+
+    print("Starting Pi UART Bridge...", flush=True)
 
     # 1. Open Serial Port (once, stays open for entire script lifetime)
     try:
@@ -219,6 +312,10 @@ def main():
     except Exception as e:
         print(f"Could not open serial port {UART_PORT}: {e}", flush=True)
         sys.exit(1)
+
+    # Status line thread. A daemon thread, so it ends when the main thread does.
+    threading.Thread(target=status_task, args=(serial_port,), daemon=True).start()
+    print(f"Status line started (every {STATUS_INTERVAL} s)", flush=True)
 
     # 2. Main Controller Connection Loop
     # This outer loop handles controller connect/disconnect/reconnect cycles
@@ -275,6 +372,7 @@ def main():
                         break
 
                 print("Controller initialized, starting main loop (100Hz updates)...", flush=True)
+                controller_active = True
 
                 # Main event processing loop
                 while True:
@@ -363,6 +461,7 @@ def main():
                 
             finally:
                 # Clean up this controller session
+                controller_active = False
                 if jsdev:
                     try:
                         jsdev.close()
